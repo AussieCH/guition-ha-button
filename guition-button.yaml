@@ -1,0 +1,585 @@
+###############################################################################
+# Guition JC3636K718C  —  Steuer-Panel für Home Assistant
+# 3 Kacheln: Ventilator / Storen / Licht  (Wohnzimmer)
+#   • Horizontal wischen  -> Kachel wechseln
+#   • Tippen              -> schalten (Fan toggle / Storen auf-zu / Licht toggle)
+#   • Knob drehen         -> Wert stellen (Drehzahl % / Position % / Helligkeit %)
+#
+# Pins & Display-Init stammen aus dem offiziellen Hersteller-Demo
+# (JC3636K718_knob_EN) – NICHT verändern.  Erster Flash MUSS über USB erfolgen
+# (16-MB-Partitionstabelle lässt sich nicht per OTA einspielen), danach geht OTA.
+###############################################################################
+
+substitutions:
+  name: wohnzimmer-knob
+  friendly_name: "Wohnzimmer Knob"
+  timezone: "Europe/Zurich"
+
+  # >>> HIER deine Home-Assistant-Entitäten eintragen <<<
+  fan_entity:   "fan.wohnzimmer_ventilator"
+  cover_entity: "cover.wohnzimmer_storen_garten"
+  light_entity: "light.wohnzimmer"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    priority: -100
+    then:
+      - lambda: 'id(render).execute();'
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  partitions: partitions.csv      # MAX-App-Layout -> erster Flash per USB!
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_ESP32S3_DEFAULT_CPU_FREQ_240: "y"
+      CONFIG_ESP32S3_DATA_CACHE_64KB: "y"
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
+      CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
+      CONFIG_SPIRAM_RODATA: y
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO        # DEBUG ist sehr laut und kostet Performance
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Setup"
+
+# Sicherheit gegen OTA-Rollback: erst nach gut 1 Min „good" markieren (esp-idf).
+safe_mode:
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: ${timezone}
+
+###############################################################################
+# HARDWARE  (autoritativ aus dem Hersteller-Demo – nicht ändern)
+###############################################################################
+spi:
+  id: display_qspi
+  type: quad
+  clk_pin: 11
+  data_pins: [13, 14, 15, 16]
+
+i2c:
+  sda: 9
+  scl: 10
+  id: touch_bus
+
+output:
+  - platform: ledc
+    pin: GPIO21
+    id: backlight_output
+
+light:
+  - platform: monochromatic
+    output: backlight_output
+    name: "Backlight"
+    id: backlight_light
+    restore_mode: ALWAYS_ON
+  # WS2812-Ring (13 LED) auf GPIO0 (BOOT/Strapping – Strapping-Warnung ist normal).
+  - platform: esp32_rmt_led_strip
+    id: ring_light
+    name: "${friendly_name} Ring"
+    pin: GPIO0
+    num_leds: 13
+    rgb_order: GRB
+    chipset: WS2812
+    rmt_symbols: 128
+    use_dma: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+touchscreen:
+  platform: cst816
+  id: my_touch
+  interrupt_pin: GPIO7
+  reset_pin: GPIO8
+  display: main_display
+  on_touch:
+    - lambda: |-
+        if (!id(g_pressed)) { id(g_pressed) = true; id(g_x0) = touch.x; id(g_y0) = touch.y; }
+        id(g_xl) = touch.x; id(g_yl) = touch.y;
+  on_release:
+    - lambda: |-
+        int dx = id(g_xl) - id(g_x0);
+        int dy = id(g_yl) - id(g_y0);
+        id(g_pressed) = false;
+        if (abs(dx) > 50 && abs(dx) > abs(dy)) {
+          // Wischen -> Kachel wechseln
+          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 3;
+          else        id(g_tile) = (id(g_tile) + 2) % 3;
+          id(render).execute();
+        } else if (abs(dx) < 25 && abs(dy) < 25) {
+          // Tippen -> schalten
+          id(tap_action).execute();
+        }
+
+# Knob: KEIN Quadratur-Encoder. Richtung = welcher Pin pulst.
+#   links  -> GPIO2 (Wert runter)   rechts -> GPIO1 (Wert hoch)
+binary_sensor:
+  - platform: gpio
+    name: "Knob links"
+    internal: true
+    pin: { number: GPIO2, inverted: true, mode: { input: true, pullup: true } }
+    on_press:
+      - lambda: 'id(knob_step).execute(-10);'
+  - platform: gpio
+    name: "Knob rechts"
+    internal: true
+    pin: { number: GPIO1, inverted: true, mode: { input: true, pullup: true } }
+    on_press:
+      - lambda: 'id(knob_step).execute(10);'
+
+###############################################################################
+# GLOBALS
+###############################################################################
+globals:
+  - { id: g_tile,    type: int,  restore_value: no, initial_value: '0' }   # 0=Fan 1=Storen 2=Licht
+  - { id: g_pressed, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: g_x0, type: int, restore_value: no, initial_value: '0' }
+  - { id: g_y0, type: int, restore_value: no, initial_value: '0' }
+  - { id: g_xl, type: int, restore_value: no, initial_value: '0' }
+  - { id: g_yl, type: int, restore_value: no, initial_value: '0' }
+  - { id: g_fan_on,   type: bool, restore_value: no, initial_value: 'false' }
+  - { id: g_fan_pct,  type: int,  restore_value: no, initial_value: '0' }
+  - { id: g_cover_pos,type: int,  restore_value: no, initial_value: '0' }   # 0=zu 100=offen
+  - { id: g_light_on, type: bool, restore_value: no, initial_value: 'false' }
+  - { id: g_light_pct,type: int,  restore_value: no, initial_value: '0' }
+
+###############################################################################
+# HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
+###############################################################################
+text_sensor:
+  - platform: homeassistant
+    id: ha_fan_state
+    entity_id: ${fan_entity}
+    on_value:
+      - lambda: 'id(g_fan_on) = (x == "on");'
+      - lambda: 'id(render).execute();'
+  - platform: homeassistant
+    id: ha_light_state
+    entity_id: ${light_entity}
+    on_value:
+      - lambda: 'id(g_light_on) = (x == "on");'
+      - lambda: 'id(render).execute();'
+
+sensor:
+  - platform: homeassistant
+    id: ha_fan_pct
+    entity_id: ${fan_entity}
+    attribute: percentage
+    on_value:
+      - lambda: 'id(g_fan_pct) = isnan(x) ? 0 : (int) x; id(render).execute();'
+  - platform: homeassistant
+    id: ha_cover_pos
+    entity_id: ${cover_entity}
+    attribute: current_position
+    on_value:
+      - lambda: 'id(g_cover_pos) = isnan(x) ? 0 : (int) x; id(render).execute();'
+  - platform: homeassistant
+    id: ha_light_bri
+    entity_id: ${light_entity}
+    attribute: brightness          # 0..255
+    on_value:
+      - lambda: 'id(g_light_pct) = isnan(x) ? 0 : (int) (x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+
+###############################################################################
+# DISPLAY  (ST77916 QSPI, 360x360, RGB565, Farben invertiert)
+###############################################################################
+display:
+  - platform: qspi_dbi
+    model: CUSTOM
+    data_rate: 80MHz
+    id: main_display
+    spi_id: display_qspi
+    color_order: rgb
+    invert_colors: true
+    dimensions: { height: 360, width: 360 }
+    cs_pin: 12
+    reset_pin: GPIO17
+    init_sequence:
+      - [ 0xF0, 0x28 ]
+      - [ 0xF2, 0x28 ]
+      - [ 0x73, 0xF0 ]
+      - [ 0x7C, 0xD1 ]
+      - [ 0x83, 0xE0 ]
+      - [ 0x84, 0x61 ]
+      - [ 0xF2, 0x82 ]
+      - [ 0xF0, 0x00 ]
+      - [ 0xF0, 0x01 ]
+      - [ 0xF1, 0x01 ]
+      - [ 0xB0, 0x56 ]
+      - [ 0xB1, 0x4D ]
+      - [ 0xB2, 0x24 ]
+      - [ 0xB4, 0x87 ]
+      - [ 0xB5, 0x44 ]
+      - [ 0xB6, 0x8B ]
+      - [ 0xB7, 0x40 ]
+      - [ 0xB8, 0x86 ]
+      - [ 0xBA, 0x00 ]
+      - [ 0xBB, 0x08 ]
+      - [ 0xBC, 0x08 ]
+      - [ 0xBD, 0x00 ]
+      - [ 0xC0, 0x80 ]
+      - [ 0xC1, 0x10 ]
+      - [ 0xC2, 0x37 ]
+      - [ 0xC3, 0x80 ]
+      - [ 0xC4, 0x10 ]
+      - [ 0xC5, 0x37 ]
+      - [ 0xC6, 0xA9 ]
+      - [ 0xC7, 0x41 ]
+      - [ 0xC8, 0x01 ]
+      - [ 0xC9, 0xA9 ]
+      - [ 0xCA, 0x41 ]
+      - [ 0xCB, 0x01 ]
+      - [ 0xD0, 0x91 ]
+      - [ 0xD1, 0x68 ]
+      - [ 0xD2, 0x68 ]
+      - [ 0xF5, 0x00, 0xA5 ]
+      - [ 0xDD, 0x4F ]
+      - [ 0xDE, 0x4F ]
+      - [ 0xF1, 0x10 ]
+      - [ 0xF0, 0x00 ]
+      - [ 0xF0, 0x02 ]
+      - [ 0xE0, 0xF0, 0x0A, 0x10, 0x09, 0x09, 0x36, 0x35, 0x33, 0x4A, 0x29, 0x15, 0x15, 0x2E, 0x34 ]
+      - [ 0xE1, 0xF0, 0x0A, 0x0F, 0x08, 0x08, 0x05, 0x34, 0x33, 0x4A, 0x39, 0x15, 0x15, 0x2D, 0x33 ]
+      - [ 0xF0, 0x10 ]
+      - [ 0xF3, 0x10 ]
+      - [ 0xE0, 0x07 ]
+      - [ 0xE1, 0x00 ]
+      - [ 0xE2, 0x00 ]
+      - [ 0xE3, 0x00 ]
+      - [ 0xE4, 0xE0 ]
+      - [ 0xE5, 0x06 ]
+      - [ 0xE6, 0x21 ]
+      - [ 0xE7, 0x01 ]
+      - [ 0xE8, 0x05 ]
+      - [ 0xE9, 0x02 ]
+      - [ 0xEA, 0xDA ]
+      - [ 0xEB, 0x00 ]
+      - [ 0xEC, 0x00 ]
+      - [ 0xED, 0x0F ]
+      - [ 0xEE, 0x00 ]
+      - [ 0xEF, 0x00 ]
+      - [ 0xF8, 0x00 ]
+      - [ 0xF9, 0x00 ]
+      - [ 0xFA, 0x00 ]
+      - [ 0xFB, 0x00 ]
+      - [ 0xFC, 0x00 ]
+      - [ 0xFD, 0x00 ]
+      - [ 0xFE, 0x00 ]
+      - [ 0xFF, 0x00 ]
+      - [ 0x60, 0x40 ]
+      - [ 0x61, 0x04 ]
+      - [ 0x62, 0x00 ]
+      - [ 0x63, 0x42 ]
+      - [ 0x64, 0xD9 ]
+      - [ 0x65, 0x00 ]
+      - [ 0x66, 0x00 ]
+      - [ 0x67, 0x00 ]
+      - [ 0x68, 0x00 ]
+      - [ 0x69, 0x00 ]
+      - [ 0x6A, 0x00 ]
+      - [ 0x6B, 0x00 ]
+      - [ 0x70, 0x40 ]
+      - [ 0x71, 0x03 ]
+      - [ 0x72, 0x00 ]
+      - [ 0x73, 0x42 ]
+      - [ 0x74, 0xD8 ]
+      - [ 0x75, 0x00 ]
+      - [ 0x76, 0x00 ]
+      - [ 0x77, 0x00 ]
+      - [ 0x78, 0x00 ]
+      - [ 0x79, 0x00 ]
+      - [ 0x7A, 0x00 ]
+      - [ 0x7B, 0x00 ]
+      - [ 0x80, 0x48 ]
+      - [ 0x81, 0x00 ]
+      - [ 0x82, 0x06 ]
+      - [ 0x83, 0x02 ]
+      - [ 0x84, 0xD6 ]
+      - [ 0x85, 0x04 ]
+      - [ 0x86, 0x00 ]
+      - [ 0x87, 0x00 ]
+      - [ 0x88, 0x48 ]
+      - [ 0x89, 0x00 ]
+      - [ 0x8A, 0x08 ]
+      - [ 0x8B, 0x02 ]
+      - [ 0x8C, 0xD8 ]
+      - [ 0x8D, 0x04 ]
+      - [ 0x8E, 0x00 ]
+      - [ 0x8F, 0x00 ]
+      - [ 0x90, 0x48 ]
+      - [ 0x91, 0x00 ]
+      - [ 0x92, 0x0A ]
+      - [ 0x93, 0x02 ]
+      - [ 0x94, 0xDA ]
+      - [ 0x95, 0x04 ]
+      - [ 0x96, 0x00 ]
+      - [ 0x97, 0x00 ]
+      - [ 0x98, 0x48 ]
+      - [ 0x99, 0x00 ]
+      - [ 0x9A, 0x0C ]
+      - [ 0x9B, 0x02 ]
+      - [ 0x9C, 0xDC ]
+      - [ 0x9D, 0x04 ]
+      - [ 0x9E, 0x00 ]
+      - [ 0x9F, 0x00 ]
+      - [ 0xA0, 0x48 ]
+      - [ 0xA1, 0x00 ]
+      - [ 0xA2, 0x05 ]
+      - [ 0xA3, 0x02 ]
+      - [ 0xA4, 0xD5 ]
+      - [ 0xA5, 0x04 ]
+      - [ 0xA6, 0x00 ]
+      - [ 0xA7, 0x00 ]
+      - [ 0xA8, 0x48 ]
+      - [ 0xA9, 0x00 ]
+      - [ 0xAA, 0x07 ]
+      - [ 0xAB, 0x02 ]
+      - [ 0xAC, 0xD7 ]
+      - [ 0xAD, 0x04 ]
+      - [ 0xAE, 0x00 ]
+      - [ 0xAF, 0x00 ]
+      - [ 0xB0, 0x48 ]
+      - [ 0xB1, 0x00 ]
+      - [ 0xB2, 0x09 ]
+      - [ 0xB3, 0x02 ]
+      - [ 0xB4, 0xD9 ]
+      - [ 0xB5, 0x04 ]
+      - [ 0xB6, 0x00 ]
+      - [ 0xB7, 0x00 ]
+      - [ 0xB8, 0x48 ]
+      - [ 0xB9, 0x00 ]
+      - [ 0xBA, 0x0B ]
+      - [ 0xBB, 0x02 ]
+      - [ 0xBC, 0xDB ]
+      - [ 0xBD, 0x04 ]
+      - [ 0xBE, 0x00 ]
+      - [ 0xBF, 0x00 ]
+      - [ 0xC0, 0x10 ]
+      - [ 0xC1, 0x47 ]
+      - [ 0xC2, 0x56 ]
+      - [ 0xC3, 0x65 ]
+      - [ 0xC4, 0x74 ]
+      - [ 0xC5, 0x88 ]
+      - [ 0xC6, 0x99 ]
+      - [ 0xC7, 0x01 ]
+      - [ 0xC8, 0xBB ]
+      - [ 0xC9, 0xAA ]
+      - [ 0xD0, 0x10 ]
+      - [ 0xD1, 0x47 ]
+      - [ 0xD2, 0x56 ]
+      - [ 0xD3, 0x65 ]
+      - [ 0xD4, 0x74 ]
+      - [ 0xD5, 0x88 ]
+      - [ 0xD6, 0x99 ]
+      - [ 0xD7, 0x01 ]
+      - [ 0xD8, 0xBB ]
+      - [ 0xD9, 0xAA ]
+      - [ 0xF3, 0x01 ]
+      - [ 0xF0, 0x00 ]
+      - [ 0x3A, 0x55 ]   # 16-bit / RGB565
+      - [ 0x21, 0x00 ]   # invert
+      - [ 0x11, 0x00 ]   # sleep out
+      - delay 120ms
+      - [ 0x29, 0x00 ]   # display on
+
+###############################################################################
+# FONTS
+###############################################################################
+font:
+  - file: "gfonts://Roboto"
+    id: font_name
+    size: 30
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  - file: "gfonts://Roboto"
+    id: font_val
+    size: 52
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  - file: "gfonts://Roboto"
+    id: font_dots
+    size: 22
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
+  # Material-Design-Icons (TTF wird beim Kompilieren geladen -> Build-Host braucht Internet)
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: font_icon
+    size: 96
+    bpp: 4
+    glyphs:
+      - "\U000F0210"   # mdi:fan
+      - "\U000F11D9"   # mdi:window-shutter
+      - "\U000F0335"   # mdi:lightbulb
+
+###############################################################################
+# LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
+###############################################################################
+lvgl:
+  buffer_size: 24%            # Draw-Buffer in schnelles internes RAM (nicht PSRAM)
+  displays: [main_display]
+  touchscreens: [my_touch]
+  bg_color: 0x000000
+  pages:
+    - id: page_main
+      bg_color: 0x000000
+      widgets:
+        - arc:
+            id: w_arc
+            align: CENTER
+            width: 320
+            height: 320
+            arc_width: 14
+            min_value: 0
+            max_value: 100
+            value: 0
+            adjustable: false
+            arc_color: 0x202020
+            indicator: { arc_color: 0x3DA9FC, arc_width: 14 }
+            knob: { bg_opa: TRANSP }
+        - label:
+            id: w_icon
+            align: CENTER
+            y: -36
+            text_font: font_icon
+            text_color: 0xFFFFFF
+            text: "\U000F0210"
+        - label:
+            id: w_name
+            align: CENTER
+            y: 56
+            text_font: font_name
+            text_color: 0xFFFFFF
+            text: "Ventilator"
+        - label:
+            id: w_val
+            align: CENTER
+            y: 104
+            text_font: font_val
+            text_color: 0x3DA9FC
+            text: "--"
+        - label:
+            id: w_dots
+            align: CENTER
+            y: 150
+            text_font: font_dots
+            text_color: 0x888888
+            text: "● ○ ○"
+
+###############################################################################
+# SCRIPTE: render / tap_action / knob_step
+###############################################################################
+script:
+  # --- UI neu zeichnen abhängig von g_tile + Globals ---
+  - id: render
+    then:
+      - lambda: |-
+          int t = id(g_tile);
+          const char* dots[] = { "● ○ ○", "○ ● ○", "○ ○ ●" };
+          lv_label_set_text(id(w_dots), dots[t]);
+          char buf[16];
+          if (t == 0) {                              // Ventilator
+            lv_label_set_text(id(w_icon), "\U000F0210");
+            lv_label_set_text(id(w_name), "Ventilator");
+            if (id(g_fan_on)) snprintf(buf, sizeof(buf), "%d%%", id(g_fan_pct));
+            else              snprintf(buf, sizeof(buf), "Aus");
+            lv_label_set_text(id(w_val), buf);
+            lv_arc_set_value(id(w_arc), id(g_fan_on) ? id(g_fan_pct) : 0);
+          } else if (t == 1) {                       // Storen
+            lv_label_set_text(id(w_icon), "\U000F11D9");
+            lv_label_set_text(id(w_name), "Storen");
+            snprintf(buf, sizeof(buf), "%d%%", id(g_cover_pos));
+            lv_label_set_text(id(w_val), buf);
+            lv_arc_set_value(id(w_arc), id(g_cover_pos));
+          } else {                                   // Licht
+            lv_label_set_text(id(w_icon), "\U000F0335");
+            lv_label_set_text(id(w_name), "Licht");
+            if (id(g_light_on)) snprintf(buf, sizeof(buf), "%d%%", id(g_light_pct));
+            else                snprintf(buf, sizeof(buf), "Aus");
+            lv_label_set_text(id(w_val), buf);
+            lv_arc_set_value(id(w_arc), id(g_light_on) ? id(g_light_pct) : 0);
+          }
+
+  # --- Tippen: aktive Kachel schalten ---
+  - id: tap_action
+    then:
+      - lambda: |-
+          int t = id(g_tile);
+          if (t == 0) {
+            id(act_fan_toggle).execute();
+          } else if (t == 1) {
+            if (id(g_cover_pos) > 50) id(act_cover_close).execute();
+            else                      id(act_cover_open).execute();
+          } else {
+            id(act_light_toggle).execute();
+          }
+
+  # --- Knob: Wert der aktiven Kachel um delta ändern + an HA senden ---
+  - id: knob_step
+    parameters: { delta: int }
+    then:
+      - lambda: |-
+          int t = id(g_tile);
+          if (t == 0) {
+            int v = id(g_fan_pct) + delta; if (v < 0) v = 0; if (v > 100) v = 100;
+            id(g_fan_pct) = v;
+            id(act_fan_set).execute();
+          } else if (t == 1) {
+            int v = id(g_cover_pos) + delta; if (v < 0) v = 0; if (v > 100) v = 100;
+            id(g_cover_pos) = v;
+            id(act_cover_set).execute();
+          } else {
+            int v = id(g_light_pct) + delta; if (v < 0) v = 0; if (v > 100) v = 100;
+            id(g_light_pct) = v;
+            id(act_light_set).execute();
+          }
+      - lambda: 'id(render).execute();'
+
+  # --- HA-Service-Wrapper (eigene Scripts, damit Lambdas sie aufrufen können) ---
+  - id: act_fan_toggle
+    then:
+      - homeassistant.action: { action: fan.toggle, data: { entity_id: "${fan_entity}" } }
+  - id: act_fan_set
+    then:
+      - homeassistant.action:
+          action: fan.set_percentage
+          data: { entity_id: "${fan_entity}", percentage: !lambda 'return id(g_fan_pct);' }
+  - id: act_cover_open
+    then:
+      - homeassistant.action: { action: cover.open_cover, data: { entity_id: "${cover_entity}" } }
+  - id: act_cover_close
+    then:
+      - homeassistant.action: { action: cover.close_cover, data: { entity_id: "${cover_entity}" } }
+  - id: act_cover_set
+    then:
+      - homeassistant.action:
+          action: cover.set_cover_position
+          data: { entity_id: "${cover_entity}", position: !lambda 'return id(g_cover_pos);' }
+  - id: act_light_toggle
+    then:
+      - homeassistant.action: { action: light.toggle, data: { entity_id: "${light_entity}" } }
+  - id: act_light_set
+    then:
+      - homeassistant.action:
+          action: light.turn_on
+          data: { entity_id: "${light_entity}", brightness_pct: !lambda 'return id(g_light_pct);' }

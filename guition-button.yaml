@@ -915,14 +915,14 @@ script:
   - id: act_tv_playpause      # ein Button: toggelt Play/Pause
     then:
       - homeassistant.action: { action: media_player.media_play_pause, data: { entity_id: "${tv_media_entity}" } }
-  - id: act_tv_power          # an/aus über remote.wohnzimmer (Apple TV aufwecken/schlafen)
+  - id: act_tv_power          # Apple TV schlafen/aufwecken via remote.send_command
     then:
       - if:
           condition: { lambda: 'return id(g_tv_on);' }
           then:
-            - homeassistant.action: { action: remote.turn_off, data: { entity_id: "${tv_remote_entity}" } }
+            - homeassistant.action: { action: remote.send_command, data: { entity_id: "${tv_remote_entity}", command: "suspend" } }
           else:
-            - homeassistant.action: { action: remote.turn_on, data: { entity_id: "${tv_remote_entity}" } }
+            - homeassistant.action: { action: remote.send_command, data: { entity_id: "${tv_remote_entity}", command: "wakeup" } }
   - id: act_tv_volup
     then:
       - homeassistant.action: { action: media_player.volume_up, data: { entity_id: "${tv_media_entity}" } }

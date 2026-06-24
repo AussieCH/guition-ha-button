@@ -55,7 +55,7 @@ psram:
   speed: 80MHz
 
 logger:
-  level: INFO               # DEBUG/VERBOSE nur zur Diagnose (kostet LVGL-Performance)
+  level: INFO               # DEBUG/VERBOSE nur zur Diagnose
 
 api:
   encryption:
@@ -206,7 +206,8 @@ globals:
   - { id: g_cr, type: int, restore_value: no, initial_value: '255' }     # aus Hue berechnetes RGB
   - { id: g_cg, type: int, restore_value: no, initial_value: '0' }
   - { id: g_cb, type: int, restore_value: no, initial_value: '0' }
-  - { id: g_tv_state, type: int, restore_value: no, initial_value: '0' }  # 0=aus 1=läuft 2=pause 3=bereit
+  - { id: g_tv_state, type: int, restore_value: no, initial_value: '0' }  # media_player: 1=läuft 2=pause 0/3=sonst
+  - { id: g_tv_on, type: bool, restore_value: no, initial_value: 'false' } # remote.wohnzimmer an/aus
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
@@ -234,9 +235,13 @@ text_sensor:
       - lambda: |-
           if (x == "playing") id(g_tv_state) = 1;
           else if (x == "paused") id(g_tv_state) = 2;
-          else if (x == "off" || x == "standby" || x == "unavailable") id(g_tv_state) = 0;
-          else id(g_tv_state) = 3;   // idle/on/bereit
+          else id(g_tv_state) = 0;
           id(render).execute();
+  - platform: homeassistant
+    id: ha_tv_power
+    entity_id: ${tv_remote_entity}
+    on_value:
+      - lambda: 'id(g_tv_on) = (x == "on"); id(render).execute();'
 
 sensor:
   - platform: homeassistant
@@ -511,9 +516,8 @@ font:
       - "\U000F03D8"   # mdi:palette (Farb-Preset wechseln)
       - "\U000F0737"   # mdi:arrow-up-bold (Storen öffnen)
       - "\U000F072E"   # mdi:arrow-down-bold (Storen schließen)
-      - "\U000F03E4"   # mdi:pause (Apple TV)
-      - "\U000F040A"   # mdi:play (Apple TV)
-      - "\U000F0425"   # mdi:power (Apple TV alles aus)
+      - "\U000F040E"   # mdi:play-pause (Apple TV Toggle)
+      - "\U000F0425"   # mdi:power (Apple TV an/aus)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -623,13 +627,13 @@ lvgl:
                   text: "\U000F072E"
             on_click:
               - lambda: 'id(act_cover_close).execute();'
-        # Apple-TV-Buttons (nur auf Kachel 6): Pause / Weiter / Alles aus
+        # Apple-TV-Buttons (nur auf Kachel 6): Play/Pause + Power
         - button:
-            id: w_tv_pause
+            id: w_tv_playpause
             align: CENTER
-            x: -100
+            x: -55
             y: 80
-            width: 64
+            width: 72
             height: 64
             radius: 18
             bg_color: 0x1A2230
@@ -637,31 +641,15 @@ lvgl:
             border_color: 0x3DA9FC
             hidden: true
             widgets:
-              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x3DA9FC, text: "\U000F03E4" }
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x3DA9FC, text: "\U000F040E" }
             on_click:
-              - lambda: 'id(act_tv_pause).execute();'
+              - lambda: 'id(act_tv_playpause).execute();'
         - button:
-            id: w_tv_play
+            id: w_tv_power
             align: CENTER
-            x: 0
+            x: 55
             y: 80
-            width: 64
-            height: 64
-            radius: 18
-            bg_color: 0x1A2230
-            border_width: 2
-            border_color: 0x3DA9FC
-            hidden: true
-            widgets:
-              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x3DA9FC, text: "\U000F040A" }
-            on_click:
-              - lambda: 'id(act_tv_play).execute();'
-        - button:
-            id: w_tv_off
-            align: CENTER
-            x: 100
-            y: 80
-            width: 64
+            width: 72
             height: 64
             radius: 18
             bg_color: 0x2A1A1A
@@ -671,7 +659,7 @@ lvgl:
             widgets:
               - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xC0504D, text: "\U000F0425" }
             on_click:
-              - lambda: 'id(act_tv_off).execute();'
+              - lambda: 'id(act_tv_power).execute();'
         - label:
             id: w_dots
             align: CENTER
@@ -721,15 +709,13 @@ script:
           } else {
             lv_obj_add_flag(id(w_btn), LV_OBJ_FLAG_HIDDEN);
           }
-          // Apple-TV-Kachel (6): drei Buttons Pause / Weiter / Alles aus
+          // Apple-TV-Kachel (6): zwei Buttons Play/Pause + Power
           if (t == 6) {
-            lv_obj_clear_flag(id(w_tv_pause), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(id(w_tv_play),  LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(id(w_tv_off),   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tv_playpause), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tv_power),     LV_OBJ_FLAG_HIDDEN);
           } else {
-            lv_obj_add_flag(id(w_tv_pause), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(w_tv_play),  LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(w_tv_off),   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tv_playpause), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tv_power),     LV_OBJ_FLAG_HIDDEN);
           }
           // Storen-Kachel (1): zwei Buttons Öffnen/Schließen statt Mittel-Button
           if (t == 1) {
@@ -786,7 +772,7 @@ script:
             lv_label_set_text(id(w_name), "Apple TV");
             lv_arc_set_range(id(w_arc), 0, 100);
             lv_arc_set_value(id(w_arc), 0);
-            const char* s = (id(g_tv_state) == 1) ? "Läuft" : (id(g_tv_state) == 2) ? "Pause" : (id(g_tv_state) == 0) ? "Aus" : "Bereit";
+            const char* s = !id(g_tv_on) ? "Aus" : (id(g_tv_state) == 1) ? "Läuft" : (id(g_tv_state) == 2) ? "Pause" : "An";
             lv_label_set_text(id(w_val), s);
           }
 
@@ -926,15 +912,17 @@ script:
           data: { entity_id: !lambda 'return id(g_ltarget);' }
 
   # --- Apple TV ---
-  - id: act_tv_pause
+  - id: act_tv_playpause      # ein Button: toggelt Play/Pause
     then:
-      - homeassistant.action: { action: media_player.media_pause, data: { entity_id: "${tv_media_entity}" } }
-  - id: act_tv_play
+      - homeassistant.action: { action: media_player.media_play_pause, data: { entity_id: "${tv_media_entity}" } }
+  - id: act_tv_power          # an/aus über remote.wohnzimmer (Apple TV aufwecken/schlafen)
     then:
-      - homeassistant.action: { action: media_player.media_play, data: { entity_id: "${tv_media_entity}" } }
-  - id: act_tv_off            # Alles aus
-    then:
-      - homeassistant.action: { action: media_player.turn_off, data: { entity_id: "${tv_media_entity}" } }
+      - if:
+          condition: { lambda: 'return id(g_tv_on);' }
+          then:
+            - homeassistant.action: { action: remote.turn_off, data: { entity_id: "${tv_remote_entity}" } }
+          else:
+            - homeassistant.action: { action: remote.turn_on, data: { entity_id: "${tv_remote_entity}" } }
   - id: act_tv_volup
     then:
       - homeassistant.action: { action: media_player.volume_up, data: { entity_id: "${tv_media_entity}" } }

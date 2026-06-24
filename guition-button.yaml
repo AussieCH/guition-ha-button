@@ -145,8 +145,8 @@ touchscreen:
           else        id(g_tile) = (id(g_tile) + 5) % 6;
           id(render).execute();
         } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
-          // Vertikal wischen: nach unten auf Licht-Kachel -> Farbmenü
-          if (dy > 0 && t >= 2) id(enter_color).execute();
+          // Vertikal wischen: nach unten auf Einzel-Lampe (3..5) -> Farbmenü
+          if (dy > 0 && t >= 3) id(enter_color).execute();
         } else if (abs(dx) < 25 && abs(dy) < 25) {
           // Tippen -> schalten, ABER nicht wenn auf dem Aktions-Button
           // (der hat seinen eigenen on_click). Button-Mitte ~ (180, 260), 64px.
@@ -646,8 +646,9 @@ script:
           std::string d;
           for (int i = 0; i < 6; i++) d += (i == t) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
-          // Aktions-Button: Ventilator(0)=Umkehren, Licht(2..5)=Farbe, Storen(1)=aus
-          if (t == 0 || t >= 2) {
+          // Aktions-Button: Ventilator(0)=Umkehren, Einzel-Lampen(3..5)=Farbe.
+          // "Licht alle"(2) hat KEINEN Button (reiner Master-Dimmer), Storen(1) auch nicht.
+          if (t == 0 || t >= 3) {
             lv_obj_clear_flag(id(w_btn), LV_OBJ_FLAG_HIDDEN);
             lv_label_set_text(id(w_btnico), (t == 0) ? "\U000F006A" : "\U000F03D8");
           } else {
@@ -684,10 +685,12 @@ script:
             lv_label_set_text(id(w_icon), "\U000F1253");
             lv_label_set_text(id(w_name), "Licht (alle)");
             lv_arc_set_range(id(w_arc), 0, 100);
-            bool any = id(g_li_on)[0] || id(g_li_on)[1] || id(g_li_on)[2];
-            lv_arc_set_value(id(w_arc), any ? id(g_all_pct) : 0);
-            if (any) snprintf(buf, sizeof(buf), "%d%%", id(g_all_pct));
-            else     snprintf(buf, sizeof(buf), "Aus");
+            int sum = 0, n = 0;
+            for (int k = 0; k < 3; k++) if (id(g_li_on)[k]) { sum += id(g_li_pct)[k]; n++; }
+            int avg = n ? sum / n : 0;
+            lv_arc_set_value(id(w_arc), avg);
+            if (n) snprintf(buf, sizeof(buf), "%d%%", avg);
+            else   snprintf(buf, sizeof(buf), "Aus");
             lv_label_set_text(id(w_val), buf);
           } else {                                   // Einzel-Lampe (3=Gradient 4=Lightstrip 5=Stehlampe)
             int k = t - 3;
@@ -712,10 +715,10 @@ script:
             // Ventilator: Tippen ohne Funktion (Stufe = Dial, Umkehren = Button)
           } else if (t == 1) {                       // Storen: Tippen inaktiv (Buttons öffnen/schließen)
             // nichts
-          } else if (t == 2) {                       // Licht alle: an wenn aus, sonst aus
+          } else if (t == 2) {                       // Licht alle: alle an wenn aus, sonst alle aus
             bool any = id(g_li_on)[0] || id(g_li_on)[1] || id(g_li_on)[2];
-            if (any) { id(act_light_off).execute(); }
-            else     { id(g_set_pct) = id(g_all_pct); id(act_light_on).execute(); }
+            if (any) id(act_light_off).execute();    // g_ltarget = alle 3 (von render gesetzt)
+            else     id(act_group_on).execute();
           } else {                                   // Einzel-Lampe: toggeln
             id(act_light_toggle).execute();
           }
@@ -741,10 +744,13 @@ script:
             if (v != id(g_fan_speed)) { id(g_fan_speed) = v; id(act_fan_apply).execute(); }
           } else if (t == 1) {                       // Storen: Knob inaktiv (Buttons öffnen/schließen)
             // nichts
-          } else if (t == 2) {                       // Licht alle: ±5 % Helligkeit
-            int v = id(g_all_pct) + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;
-            id(g_all_pct) = v; id(g_set_pct) = v;
-            id(act_light_on).execute();
+          } else if (t == 2) {                       // Licht alle: relativ ±5 %, je Lampe ab Ist-Wert
+            for (int k = 0; k < 3; k++) {
+              if (!id(g_li_on)[k]) continue;         // ausgeschaltete Lampen bleiben aus
+              int v = id(g_li_pct)[k] + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;
+              id(g_li_pct)[k] = v;
+            }
+            id(act_group_dim).execute();
           } else {                                   // Einzel-Lampe: ±5 % Helligkeit
             int k = t - 3;
             int v = id(g_li_pct)[k] + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;
@@ -800,6 +806,35 @@ script:
       - homeassistant.action:
           action: light.turn_off
           data: { entity_id: !lambda 'return id(g_ltarget);' }
+  # --- Licht alle (Master) ---
+  # Pro-Lampe-Helligkeit (eigene Entity + eigener g_li_pct, keine geteilten Variablen)
+  - id: act_l1_bri
+    then:
+      - homeassistant.action:
+          action: light.turn_on
+          data: { entity_id: "${light1_entity}", brightness_pct: !lambda 'return id(g_li_pct)[0];' }
+  - id: act_l2_bri
+    then:
+      - homeassistant.action:
+          action: light.turn_on
+          data: { entity_id: "${light2_entity}", brightness_pct: !lambda 'return id(g_li_pct)[1];' }
+  - id: act_l3_bri
+    then:
+      - homeassistant.action:
+          action: light.turn_on
+          data: { entity_id: "${light3_entity}", brightness_pct: !lambda 'return id(g_li_pct)[2];' }
+  # Relatives Dimmen: nur eingeschaltete Lampen auf ihren neuen g_li_pct setzen
+  - id: act_group_dim
+    then:
+      - if: { condition: { lambda: 'return id(g_li_on)[0];' }, then: [ script.execute: act_l1_bri ] }
+      - if: { condition: { lambda: 'return id(g_li_on)[1];' }, then: [ script.execute: act_l2_bri ] }
+      - if: { condition: { lambda: 'return id(g_li_on)[2];' }, then: [ script.execute: act_l3_bri ] }
+  # Alle drei einschalten (ohne Helligkeit -> jede Lampe kehrt zu ihrem letzten Wert zurück)
+  - id: act_group_on
+    then:
+      - homeassistant.action:
+          action: light.turn_on
+          data: { entity_id: !lambda 'return id(g_ltarget);' }
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:
       - homeassistant.action:
@@ -823,8 +858,8 @@ script:
           int t = id(g_tile);
           if (t == 0) {
             id(act_fan_reverse).execute();
-          } else if (t >= 2) {
-            id(enter_color).execute();      // Paletten-Icon = Farbmenü (wie runter wischen)
+          } else if (t >= 3) {
+            id(enter_color).execute();      // Paletten-Icon = Farbmenü (nur Einzel-Lampen)
           }
 
   # --- Farbmenü ---

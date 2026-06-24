@@ -1,15 +1,29 @@
 # Guition Knob – Wohnzimmer-Steuerung (Home Assistant)
 
 ESPHome-Firmware für den **Guition JC3636K718C** (runder 1.8" Knob-Screen,
-ESP32-S3). Ein schlankes Steuer-Panel für drei Entitäten im Wohnzimmer:
+ESP32-S3). Ein schlankes Steuer-Panel fürs Wohnzimmer mit **6 Kacheln**:
 
-| Kachel | Tippen | Knob drehen |
-|--------|--------|-------------|
-| **Ventilator** | – (Umkehren-Button mittig) | Stufe ±1 (Stop, 1–6) |
-| **Storen** | Auf / Zu (je nach Position) | rechts = auf, links = zu |
-| **Licht** | An/Aus (`light.toggle`) | Helligkeit ±10 % |
+| Kachel | Tippen | Knob drehen | Mittel-Button |
+|--------|--------|-------------|---------------|
+| **Ventilator** | – | Stufe ±1 (Stop, 1–6) | Drehrichtung umkehren |
+| **Storen** | Auf / Zu | rechts = auf, links = zu | – |
+| **Licht (alle)** | alle an/aus | Helligkeit ±10 % (alle) | Farb-Preset weiter |
+| **Gradient** | an/aus | Helligkeit ±10 % | Farb-Preset weiter |
+| **Lightstrip** | an/aus | Helligkeit ±10 % | Farb-Preset weiter |
+| **Stehlampe** | an/aus | Helligkeit ±10 % | Farb-Preset weiter |
 
-**Horizontal wischen** wechselt die Kachel (3 Punkte unten zeigen die aktive an).
+**Horizontal wischen** wechselt die Kachel (Punkte unten zeigen die aktive an).
+Der **Mittel-Button** (auf Ventilator + Licht-Kacheln) hat seinen eigenen Druck;
+ein Tipp dort schaltet die Lampe *nicht* mit.
+
+### Licht (3× Philips Hue)
+
+Drei Hue-Leuchten: `light.gradient_lightstrip_wohnzimmer`,
+`light.lightstrip_wohnzimmer`, `light.stehlampe_wohnzimmer`. Die **Sammel-Kachel
+„Licht (alle)"** steuert alle drei gemeinsam (eine Komma-Entity-Liste), die drei
+Einzelkacheln je eine Lampe. Tippen = an/aus, Dial = Helligkeit, Mittel-Button =
+nächstes **Farb-Preset** (Warmweiß → Orange → Blau → Lila → Orchidee → Tomate, per
+`color_name`). Helligkeit/Status werden live aus HA gelesen (`brightness`-Attribut).
 
 ### Ventilator (RF über HA-Scripts)
 

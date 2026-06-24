@@ -21,7 +21,10 @@ substitutions:
   #   Stufen-Scripts sind in act_fan_apply / act_fan_reverse hart hinterlegt.
   fan_speed_entity: "input_number.fan_wohnzimmer_speed"
   cover_entity: "cover.store_wohnzimmer_fest"
-  light_entity: "light.wohnzimmer"
+  # Drei Hue-Leuchten im Wohnzimmer (+ Sammel-Kachel steuert alle gemeinsam)
+  light1_entity: "light.gradient_lightstrip_wohnzimmer"
+  light2_entity: "light.lightstrip_wohnzimmer"
+  light3_entity: "light.stehlampe_wohnzimmer"
 
 esphome:
   name: ${name}
@@ -126,13 +129,17 @@ touchscreen:
         int dy = id(g_yl) - id(g_y0);
         id(g_pressed) = false;
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
-          // Wischen -> Kachel wechseln
-          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 3;
-          else        id(g_tile) = (id(g_tile) + 2) % 3;
+          // Wischen -> Kachel wechseln (6 Kacheln)
+          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 6;
+          else        id(g_tile) = (id(g_tile) + 5) % 6;
           id(render).execute();
         } else if (abs(dx) < 25 && abs(dy) < 25) {
-          // Tippen -> schalten
-          id(tap_action).execute();
+          // Tippen -> schalten, ABER nicht wenn auf dem Aktions-Button
+          // (der hat seinen eigenen on_click). Button-Mitte ~ (180, 260), 64px.
+          int t = id(g_tile);
+          bool btn_shown = (t == 0 || t >= 2);
+          bool on_btn = btn_shown && abs(id(g_xl) - 180) <= 40 && abs(id(g_yl) - 260) <= 40;
+          if (!on_btn) id(tap_action).execute();
         }
 
 # Knob: KEIN Quadratur-Encoder. Richtung = welcher Pin pulst.
@@ -155,27 +162,48 @@ binary_sensor:
 # GLOBALS
 ###############################################################################
 globals:
-  - { id: g_tile,    type: int,  restore_value: no, initial_value: '0' }   # 0=Fan 1=Storen 2=Licht
+  # Kacheln: 0=Ventilator 1=Storen 2=Licht(alle) 3=Gradient 4=Lightstrip 5=Stehlampe
+  - { id: g_tile,    type: int,  restore_value: no, initial_value: '0' }
   - { id: g_pressed, type: bool, restore_value: no, initial_value: 'false' }
   - { id: g_x0, type: int, restore_value: no, initial_value: '0' }
   - { id: g_y0, type: int, restore_value: no, initial_value: '0' }
   - { id: g_xl, type: int, restore_value: no, initial_value: '0' }
   - { id: g_yl, type: int, restore_value: no, initial_value: '0' }
-  - { id: g_fan_speed, type: int, restore_value: yes, initial_value: '0' }  # 0=Stop, 1..6 (Ist-Wert aus input_number, bis HA verbunden ist letzter Stand)
+  - { id: g_fan_speed, type: int, restore_value: yes, initial_value: '0' }  # 0=Stop, 1..6 (Ist-Wert aus input_number)
   - { id: g_cover_pos,type: int,  restore_value: no, initial_value: '0' }   # 0=zu 100=offen
-  - { id: g_light_on, type: bool, restore_value: no, initial_value: 'false' }
-  - { id: g_light_pct,type: int,  restore_value: no, initial_value: '0' }
+  # Licht: Ist-Zustand der 3 Lampen (Index 0=Gradient 1=Lightstrip 2=Stehlampe)
+  - id: g_li_on
+    type: bool[3]
+    restore_value: no
+    initial_value: '{false, false, false}'
+  - id: g_li_pct
+    type: int[3]
+    restore_value: no
+    initial_value: '{0, 0, 0}'
+  - { id: g_all_pct, type: int, restore_value: no, initial_value: '50' }    # Helligkeit der Sammel-Kachel
+  - { id: g_color_idx, type: int, restore_value: no, initial_value: '0' }   # aktuelles Farb-Preset
+  - { id: g_set_pct, type: int, restore_value: no, initial_value: '0' }     # Scratch: Helligkeit für act_light_bri
+  - { id: g_ltarget, type: std::string, restore_value: no, initial_value: '""' }  # Ziel-Entity(s) der aktiven Licht-Kachel
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
 ###############################################################################
 text_sensor:
   - platform: homeassistant
-    id: ha_light_state
-    entity_id: ${light_entity}
+    id: ha_l1_state
+    entity_id: ${light1_entity}
     on_value:
-      - lambda: 'id(g_light_on) = (x == "on");'
-      - lambda: 'id(render).execute();'
+      - lambda: 'id(g_li_on)[0] = (x == "on"); id(render).execute();'
+  - platform: homeassistant
+    id: ha_l2_state
+    entity_id: ${light2_entity}
+    on_value:
+      - lambda: 'id(g_li_on)[1] = (x == "on"); id(render).execute();'
+  - platform: homeassistant
+    id: ha_l3_state
+    entity_id: ${light3_entity}
+    on_value:
+      - lambda: 'id(g_li_on)[2] = (x == "on"); id(render).execute();'
 
 sensor:
   - platform: homeassistant
@@ -190,11 +218,23 @@ sensor:
     on_value:
       - lambda: 'id(g_cover_pos) = isnan(x) ? 0 : (int) x; id(render).execute();'
   - platform: homeassistant
-    id: ha_light_bri
-    entity_id: ${light_entity}
+    id: ha_l1_bri
+    entity_id: ${light1_entity}
     attribute: brightness          # 0..255
     on_value:
-      - lambda: 'id(g_light_pct) = isnan(x) ? 0 : (int) (x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+      - lambda: 'id(g_li_pct)[0] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+  - platform: homeassistant
+    id: ha_l2_bri
+    entity_id: ${light2_entity}
+    attribute: brightness
+    on_value:
+      - lambda: 'id(g_li_pct)[1] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+  - platform: homeassistant
+    id: ha_l3_bri
+    entity_id: ${light3_entity}
+    attribute: brightness
+    on_value:
+      - lambda: 'id(g_li_pct)[2] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
 
 ###############################################################################
 # DISPLAY  (ST77916 QSPI, 360x360, RGB565, Farben invertiert)
@@ -424,14 +464,17 @@ font:
     bpp: 4
     glyphs:
       - "\U000F0210"   # mdi:fan
-      - "\U000F11D9"   # mdi:window-shutter
-      - "\U000F0335"   # mdi:lightbulb
+      - "\U000F111C"   # mdi:window-shutter
+      - "\U000F1253"   # mdi:lightbulb-group (Sammel-Kachel)
+      - "\U000F1051"   # mdi:led-strip-variant (Gradient/Lightstrip)
+      - "\U000F08DD"   # mdi:floor-lamp (Stehlampe)
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: font_icon_sm
     size: 40
     bpp: 4
     glyphs:
-      - "\U000F0450"   # mdi:autorenew (Drehrichtung umkehren)
+      - "\U000F006A"   # mdi:autorenew (Drehrichtung umkehren)
+      - "\U000F03D8"   # mdi:palette (Farb-Preset wechseln)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -479,9 +522,10 @@ lvgl:
             text_font: font_val
             text_color: 0x3DA9FC
             text: "--"
-        # Umkehren-Button (nur auf der Ventilator-Kachel sichtbar, sonst versteckt)
+        # Aktions-Button: Ventilator -> Umkehren, Licht -> Farb-Preset.
+        # Auf Storen versteckt. Icon + Funktion setzt das render-Script.
         - button:
-            id: w_revbtn
+            id: w_btn
             align: CENTER
             y: 80
             width: 64
@@ -492,19 +536,20 @@ lvgl:
             border_color: 0x3DA9FC
             widgets:
               - label:
+                  id: w_btnico
                   align: CENTER
                   text_font: font_icon_sm
                   text_color: 0x3DA9FC
-                  text: "\U000F0450"
+                  text: "\U000F006A"
             on_click:
-              - lambda: 'id(act_fan_reverse).execute();'
+              - lambda: 'id(act_button).execute();'
         - label:
             id: w_dots
             align: CENTER
             y: 148
             text_font: font_dots
             text_color: 0x888888
-            text: "● ○ ○"
+            text: "•·····"
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step
@@ -515,11 +560,17 @@ script:
     then:
       - lambda: |-
           int t = id(g_tile);
-          const char* dots[] = { "● ○ ○", "○ ● ○", "○ ○ ●" };
-          lv_label_set_text(id(w_dots), dots[t]);
-          // Umkehren-Button nur auf der Ventilator-Kachel zeigen
-          if (t == 0) lv_obj_clear_flag(id(w_revbtn), LV_OBJ_FLAG_HIDDEN);
-          else        lv_obj_add_flag(id(w_revbtn), LV_OBJ_FLAG_HIDDEN);
+          // Punkt-Indikator (6 Kacheln): • aktiv, · inaktiv
+          std::string d;
+          for (int i = 0; i < 6; i++) d += (i == t) ? "•" : "·";
+          lv_label_set_text(id(w_dots), d.c_str());
+          // Aktions-Button: Ventilator(0)=Umkehren, Licht(2..5)=Farbe, Storen(1)=aus
+          if (t == 0 || t >= 2) {
+            lv_obj_clear_flag(id(w_btn), LV_OBJ_FLAG_HIDDEN);
+            lv_label_set_text(id(w_btnico), (t == 0) ? "\U000F006A" : "\U000F03D8");
+          } else {
+            lv_obj_add_flag(id(w_btn), LV_OBJ_FLAG_HIDDEN);
+          }
           char buf[16];
           if (t == 0) {                              // Ventilator (Stufe 0..6)
             lv_label_set_text(id(w_icon), "\U000F0210");
@@ -530,7 +581,7 @@ script:
             else                      snprintf(buf, sizeof(buf), "Stufe %d", id(g_fan_speed));
             lv_label_set_text(id(w_val), buf);
           } else if (t == 1) {                       // Storen (nur auf/zu)
-            lv_label_set_text(id(w_icon), "\U000F11D9");
+            lv_label_set_text(id(w_icon), "\U000F111C");
             lv_label_set_text(id(w_name), "Storen");
             lv_arc_set_range(id(w_arc), 0, 100);
             lv_arc_set_value(id(w_arc), id(g_cover_pos));
@@ -538,12 +589,26 @@ script:
             else if (id(g_cover_pos) <= 1)  snprintf(buf, sizeof(buf), "Zu");
             else                            snprintf(buf, sizeof(buf), "%d%%", id(g_cover_pos));
             lv_label_set_text(id(w_val), buf);
-          } else {                                   // Licht
-            lv_label_set_text(id(w_icon), "\U000F0335");
-            lv_label_set_text(id(w_name), "Licht");
+          } else if (t == 2) {                       // Licht (alle gemeinsam)
+            id(g_ltarget) = "${light1_entity},${light2_entity},${light3_entity}";
+            lv_label_set_text(id(w_icon), "\U000F1253");
+            lv_label_set_text(id(w_name), "Licht (alle)");
             lv_arc_set_range(id(w_arc), 0, 100);
-            lv_arc_set_value(id(w_arc), id(g_light_on) ? id(g_light_pct) : 0);
-            if (id(g_light_on)) snprintf(buf, sizeof(buf), "%d%%", id(g_light_pct));
+            bool any = id(g_li_on)[0] || id(g_li_on)[1] || id(g_li_on)[2];
+            lv_arc_set_value(id(w_arc), any ? id(g_all_pct) : 0);
+            if (any) snprintf(buf, sizeof(buf), "%d%%", id(g_all_pct));
+            else     snprintf(buf, sizeof(buf), "Aus");
+            lv_label_set_text(id(w_val), buf);
+          } else {                                   // Einzel-Lampe (3=Gradient 4=Lightstrip 5=Stehlampe)
+            int k = t - 3;
+            if      (t == 3) id(g_ltarget) = "${light1_entity}";
+            else if (t == 4) id(g_ltarget) = "${light2_entity}";
+            else             id(g_ltarget) = "${light3_entity}";
+            lv_label_set_text(id(w_icon), (t == 5) ? "\U000F08DD" : "\U000F1051");
+            lv_label_set_text(id(w_name), (t == 3) ? "Gradient" : (t == 4) ? "Lightstrip" : "Stehlampe");
+            lv_arc_set_range(id(w_arc), 0, 100);
+            lv_arc_set_value(id(w_arc), id(g_li_on)[k] ? id(g_li_pct)[k] : 0);
+            if (id(g_li_on)[k]) snprintf(buf, sizeof(buf), "%d%%", id(g_li_pct)[k]);
             else                snprintf(buf, sizeof(buf), "Aus");
             lv_label_set_text(id(w_val), buf);
           }
@@ -555,10 +620,14 @@ script:
           int t = id(g_tile);
           if (t == 0) {
             // Ventilator: Tippen ohne Funktion (Stufe = Dial, Umkehren = Button)
-          } else if (t == 1) {
+          } else if (t == 1) {                       // Storen: auf/zu toggeln
             if (id(g_cover_pos) > 50) id(act_cover_close).execute();
             else                      id(act_cover_open).execute();
-          } else {
+          } else if (t == 2) {                       // Licht alle: an wenn aus, sonst aus
+            bool any = id(g_li_on)[0] || id(g_li_on)[1] || id(g_li_on)[2];
+            if (any) { id(act_light_off).execute(); }
+            else     { id(g_set_pct) = id(g_all_pct); id(act_light_on).execute(); }
+          } else {                                   // Einzel-Lampe: toggeln
             id(act_light_toggle).execute();
           }
 
@@ -575,10 +644,15 @@ script:
           } else if (t == 1) {                       // Storen: Dial = auf / zu
             if (step > 0) id(act_cover_open).execute();
             else          id(act_cover_close).execute();
-          } else {                                   // Licht: ±10 % Helligkeit
-            int v = id(g_light_pct) + step * 10; if (v < 0) v = 0; if (v > 100) v = 100;
-            id(g_light_pct) = v;
-            id(act_light_set).execute();
+          } else if (t == 2) {                       // Licht alle: ±10 % Helligkeit
+            int v = id(g_all_pct) + step * 10; if (v < 0) v = 0; if (v > 100) v = 100;
+            id(g_all_pct) = v; id(g_set_pct) = v;
+            id(act_light_on).execute();
+          } else {                                   // Einzel-Lampe: ±10 % Helligkeit
+            int k = t - 3;
+            int v = id(g_li_pct)[k] + step * 10; if (v < 0) v = 0; if (v > 100) v = 100;
+            id(g_li_pct)[k] = v; id(g_set_pct) = v;
+            id(act_light_on).execute();
           }
       - lambda: 'id(render).execute();'
 
@@ -610,11 +684,49 @@ script:
   - id: act_cover_close
     then:
       - homeassistant.action: { action: cover.close_cover, data: { entity_id: "${cover_entity}" } }
+  # Licht: alle Actions zielen auf g_ltarget (eine Lampe oder die 3 als Komma-Liste).
+  # g_ltarget wird im render-Script je aktiver Kachel gesetzt.
   - id: act_light_toggle
     then:
-      - homeassistant.action: { action: light.toggle, data: { entity_id: "${light_entity}" } }
-  - id: act_light_set
+      - homeassistant.action:
+          action: light.toggle
+          data: { entity_id: !lambda 'return id(g_ltarget);' }
+  - id: act_light_on            # einschalten / dimmen auf g_set_pct
     then:
       - homeassistant.action:
           action: light.turn_on
-          data: { entity_id: "${light_entity}", brightness_pct: !lambda 'return id(g_light_pct);' }
+          data:
+            entity_id: !lambda 'return id(g_ltarget);'
+            brightness_pct: !lambda 'return id(g_set_pct);'
+  - id: act_light_off
+    then:
+      - homeassistant.action:
+          action: light.turn_off
+          data: { entity_id: !lambda 'return id(g_ltarget);' }
+  - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
+    then:
+      - homeassistant.action:
+          action: light.turn_on
+          data:
+            entity_id: !lambda 'return id(g_ltarget);'
+            color_name: !lambda |-
+              switch (id(g_color_idx)) {
+                case 0: return "bisque";           // Warmweiß
+                case 1: return "darkorange";
+                case 2: return "cornflowerblue";
+                case 3: return "mediumpurple";
+                case 4: return "orchid";
+                default: return "tomato";          // 5
+              }
+
+  # Aktions-Button-Dispatcher: Ventilator -> Umkehren, Licht -> nächstes Farb-Preset
+  - id: act_button
+    then:
+      - lambda: |-
+          int t = id(g_tile);
+          if (t == 0) {
+            id(act_fan_reverse).execute();
+          } else if (t >= 2) {
+            id(g_color_idx) = (id(g_color_idx) + 1) % 6;
+            id(act_light_color).execute();
+          }

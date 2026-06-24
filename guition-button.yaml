@@ -16,7 +16,8 @@ substitutions:
   timezone: "Europe/Zurich"
 
   # >>> HIER deine Home-Assistant-Entitäten eintragen <<<
-  fan_entity:   "fan.wohnzimmer_ventilator"
+  # Ventilator: RF -> über HA-Scripts gesteuert (kein Entity, kein Rückkanal).
+  #   Stufen-Scripts sind in act_fan_apply / act_fan_reverse hart hinterlegt.
   cover_entity: "cover.wohnzimmer_storen_garten"
   light_entity: "light.wohnzimmer"
 
@@ -158,8 +159,7 @@ globals:
   - { id: g_y0, type: int, restore_value: no, initial_value: '0' }
   - { id: g_xl, type: int, restore_value: no, initial_value: '0' }
   - { id: g_yl, type: int, restore_value: no, initial_value: '0' }
-  - { id: g_fan_on,   type: bool, restore_value: no, initial_value: 'false' }
-  - { id: g_fan_pct,  type: int,  restore_value: no, initial_value: '0' }
+  - { id: g_fan_speed, type: int, restore_value: yes, initial_value: '0' }  # 0=Stop, 1..6 (lokal, RF ohne Rückkanal)
   - { id: g_cover_pos,type: int,  restore_value: no, initial_value: '0' }   # 0=zu 100=offen
   - { id: g_light_on, type: bool, restore_value: no, initial_value: 'false' }
   - { id: g_light_pct,type: int,  restore_value: no, initial_value: '0' }
@@ -169,12 +169,6 @@ globals:
 ###############################################################################
 text_sensor:
   - platform: homeassistant
-    id: ha_fan_state
-    entity_id: ${fan_entity}
-    on_value:
-      - lambda: 'id(g_fan_on) = (x == "on");'
-      - lambda: 'id(render).execute();'
-  - platform: homeassistant
     id: ha_light_state
     entity_id: ${light_entity}
     on_value:
@@ -182,12 +176,6 @@ text_sensor:
       - lambda: 'id(render).execute();'
 
 sensor:
-  - platform: homeassistant
-    id: ha_fan_pct
-    entity_id: ${fan_entity}
-    attribute: percentage
-    on_value:
-      - lambda: 'id(g_fan_pct) = isnan(x) ? 0 : (int) x; id(render).execute();'
   - platform: homeassistant
     id: ha_cover_pos
     entity_id: ${cover_entity}
@@ -425,12 +413,18 @@ font:
   # Material-Design-Icons (TTF wird beim Kompilieren geladen -> Build-Host braucht Internet)
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: font_icon
-    size: 96
+    size: 72
     bpp: 4
     glyphs:
       - "\U000F0210"   # mdi:fan
       - "\U000F11D9"   # mdi:window-shutter
       - "\U000F0335"   # mdi:lightbulb
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: font_icon_sm
+    size: 40
+    bpp: 4
+    glyphs:
+      - "\U000F0450"   # mdi:autorenew (Drehrichtung umkehren)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -460,28 +454,47 @@ lvgl:
         - label:
             id: w_icon
             align: CENTER
-            y: -36
+            y: -92
             text_font: font_icon
             text_color: 0xFFFFFF
             text: "\U000F0210"
         - label:
             id: w_name
             align: CENTER
-            y: 56
+            y: -44
             text_font: font_name
             text_color: 0xFFFFFF
             text: "Ventilator"
         - label:
             id: w_val
             align: CENTER
-            y: 104
+            y: 6
             text_font: font_val
             text_color: 0x3DA9FC
             text: "--"
+        # Umkehren-Button (nur auf der Ventilator-Kachel sichtbar, sonst versteckt)
+        - button:
+            id: w_revbtn
+            align: CENTER
+            y: 80
+            width: 64
+            height: 64
+            radius: 32
+            bg_color: 0x1A2230
+            border_width: 2
+            border_color: 0x3DA9FC
+            widgets:
+              - label:
+                  align: CENTER
+                  text_font: font_icon_sm
+                  text_color: 0x3DA9FC
+                  text: "\U000F0450"
+            on_click:
+              - lambda: 'id(act_fan_reverse).execute();'
         - label:
             id: w_dots
             align: CENTER
-            y: 150
+            y: 148
             text_font: font_dots
             text_color: 0x888888
             text: "● ○ ○"
@@ -497,27 +510,33 @@ script:
           int t = id(g_tile);
           const char* dots[] = { "● ○ ○", "○ ● ○", "○ ○ ●" };
           lv_label_set_text(id(w_dots), dots[t]);
+          // Umkehren-Button nur auf der Ventilator-Kachel zeigen
+          if (t == 0) lv_obj_clear_flag(id(w_revbtn), LV_OBJ_FLAG_HIDDEN);
+          else        lv_obj_add_flag(id(w_revbtn), LV_OBJ_FLAG_HIDDEN);
           char buf[16];
-          if (t == 0) {                              // Ventilator
+          if (t == 0) {                              // Ventilator (Stufe 0..6)
             lv_label_set_text(id(w_icon), "\U000F0210");
             lv_label_set_text(id(w_name), "Ventilator");
-            if (id(g_fan_on)) snprintf(buf, sizeof(buf), "%d%%", id(g_fan_pct));
-            else              snprintf(buf, sizeof(buf), "Aus");
+            lv_arc_set_range(id(w_arc), 0, 6);
+            lv_arc_set_value(id(w_arc), id(g_fan_speed));
+            if (id(g_fan_speed) == 0) snprintf(buf, sizeof(buf), "Stop");
+            else                      snprintf(buf, sizeof(buf), "Stufe %d", id(g_fan_speed));
             lv_label_set_text(id(w_val), buf);
-            lv_arc_set_value(id(w_arc), id(g_fan_on) ? id(g_fan_pct) : 0);
           } else if (t == 1) {                       // Storen
             lv_label_set_text(id(w_icon), "\U000F11D9");
             lv_label_set_text(id(w_name), "Storen");
+            lv_arc_set_range(id(w_arc), 0, 100);
+            lv_arc_set_value(id(w_arc), id(g_cover_pos));
             snprintf(buf, sizeof(buf), "%d%%", id(g_cover_pos));
             lv_label_set_text(id(w_val), buf);
-            lv_arc_set_value(id(w_arc), id(g_cover_pos));
           } else {                                   // Licht
             lv_label_set_text(id(w_icon), "\U000F0335");
             lv_label_set_text(id(w_name), "Licht");
+            lv_arc_set_range(id(w_arc), 0, 100);
+            lv_arc_set_value(id(w_arc), id(g_light_on) ? id(g_light_pct) : 0);
             if (id(g_light_on)) snprintf(buf, sizeof(buf), "%d%%", id(g_light_pct));
             else                snprintf(buf, sizeof(buf), "Aus");
             lv_label_set_text(id(w_val), buf);
-            lv_arc_set_value(id(w_arc), id(g_light_on) ? id(g_light_pct) : 0);
           }
 
   # --- Tippen: aktive Kachel schalten ---
@@ -526,7 +545,7 @@ script:
       - lambda: |-
           int t = id(g_tile);
           if (t == 0) {
-            id(act_fan_toggle).execute();
+            // Ventilator: Tippen ohne Funktion (Stufe = Dial, Umkehren = Button)
           } else if (t == 1) {
             if (id(g_cover_pos) > 50) id(act_cover_close).execute();
             else                      id(act_cover_open).execute();
@@ -540,30 +559,43 @@ script:
     then:
       - lambda: |-
           int t = id(g_tile);
-          if (t == 0) {
-            int v = id(g_fan_pct) + delta; if (v < 0) v = 0; if (v > 100) v = 100;
-            id(g_fan_pct) = v;
-            id(act_fan_set).execute();
-          } else if (t == 1) {
-            int v = id(g_cover_pos) + delta; if (v < 0) v = 0; if (v > 100) v = 100;
+          int step = (delta > 0) ? 1 : -1;          // Knob: 1 Detent = 1 Schritt
+          if (t == 0) {                              // Ventilator: ±1 Stufe (0..6)
+            int v = id(g_fan_speed) + step; if (v < 0) v = 0; if (v > 6) v = 6;
+            if (v != id(g_fan_speed)) { id(g_fan_speed) = v; id(act_fan_apply).execute(); }
+          } else if (t == 1) {                       // Storen: ±10 % Position
+            int v = id(g_cover_pos) + step * 10; if (v < 0) v = 0; if (v > 100) v = 100;
             id(g_cover_pos) = v;
             id(act_cover_set).execute();
-          } else {
-            int v = id(g_light_pct) + delta; if (v < 0) v = 0; if (v > 100) v = 100;
+          } else {                                   // Licht: ±10 % Helligkeit
+            int v = id(g_light_pct) + step * 10; if (v < 0) v = 0; if (v > 100) v = 100;
             id(g_light_pct) = v;
             id(act_light_set).execute();
           }
       - lambda: 'id(render).execute();'
 
   # --- HA-Service-Wrapper (eigene Scripts, damit Lambdas sie aufrufen können) ---
-  - id: act_fan_toggle
-    then:
-      - homeassistant.action: { action: fan.toggle, data: { entity_id: "${fan_entity}" } }
-  - id: act_fan_set
+  # Ventilator (RF): aktuelle Stufe -> passendes HA-Script auslösen
+  - id: act_fan_apply
     then:
       - homeassistant.action:
-          action: fan.set_percentage
-          data: { entity_id: "${fan_entity}", percentage: !lambda 'return id(g_fan_pct);' }
+          action: script.turn_on
+          data:
+            entity_id: !lambda |-
+              switch (id(g_fan_speed)) {
+                case 1: return "script.ventilator_wohnzimmer_speed_1_t";
+                case 2: return "script.ventilator_wohnzimmer_speed_2";
+                case 3: return "script.ventilator_wohnzimmer_speed_3";
+                case 4: return "script.ventilator_wohnzimmer_speed_3_duplizieren";
+                case 5: return "script.ventilator_wohnzimmer_speed_5";
+                case 6: return "script.ventilator_wohnzimmer_speed_6";
+                default: return "script.ventilator_wohnzimmer_stop";   // 0 = Stop
+              }
+  - id: act_fan_reverse
+    then:
+      - homeassistant.action:
+          action: script.turn_on
+          data: { entity_id: "script.ventilator_wohnzimmer_umkehren" }
   - id: act_cover_open
     then:
       - homeassistant.action: { action: cover.open_cover, data: { entity_id: "${cover_entity}" } }

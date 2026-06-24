@@ -26,8 +26,8 @@ substitutions:
   light2_entity: "light.lightstrip_wohnzimmer"
   light3_entity: "light.stehlampe_wohnzimmer"
   # Apple TV (Esszimmer)
-  tv_media_entity: "media_player.tv_esszimmer"
-  tv_remote_entity: "remote.tv_esszimmer"
+  tv_media_entity: "media_player.wohnzimmer_2"
+  tv_remote_entity: "remote.wohnzimmer"
 
 esphome:
   name: ${name}

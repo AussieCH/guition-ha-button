@@ -816,7 +816,7 @@ script:
                 default: return "tomato";          // 5
               }
 
-  # Aktions-Button-Dispatcher: Ventilator -> Umkehren, Licht -> nächstes Farb-Preset
+  # Aktions-Button-Dispatcher: Ventilator -> Umkehren, Licht -> Farbmenü öffnen
   - id: act_button
     then:
       - lambda: |-
@@ -824,8 +824,7 @@ script:
           if (t == 0) {
             id(act_fan_reverse).execute();
           } else if (t >= 2) {
-            id(g_color_idx) = (id(g_color_idx) + 1) % 6;
-            id(act_light_color).execute();
+            id(enter_color).execute();      // Paletten-Icon = Farbmenü (wie runter wischen)
           }
 
   # --- Farbmenü ---

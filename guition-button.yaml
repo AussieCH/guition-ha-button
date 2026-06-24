@@ -20,7 +20,7 @@ substitutions:
   #   input_number.fan_wohnzimmer_speed (0..6) -> daraus lesen wir die Ist-Stufe.
   #   Stufen-Scripts sind in act_fan_apply / act_fan_reverse hart hinterlegt.
   fan_speed_entity: "input_number.fan_wohnzimmer_speed"
-  cover_entity: "cover.wohnzimmer_storen_garten"
+  cover_entity: "cover.store_wohnzimmer_fest"
   light_entity: "light.wohnzimmer"
 
 esphome:

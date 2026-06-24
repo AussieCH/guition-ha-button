@@ -52,7 +52,7 @@ psram:
   speed: 80MHz
 
 logger:
-  level: INFO        # DEBUG ist sehr laut und kostet Performance
+  level: INFO               # DEBUG/VERBOSE nur zur Diagnose (kostet LVGL-Performance)
 
 api:
   encryption:
@@ -65,6 +65,7 @@ ota:
 wifi:
   ssid: !secret wifi_ssid
   password: !secret wifi_password
+  fast_connect: true       # nötig für verstecktes (nicht gebroadcastetes) WLAN
   ap:
     ssid: "${friendly_name} Setup"
 
@@ -120,14 +121,19 @@ touchscreen:
   reset_pin: GPIO8
   display: main_display
   on_touch:
+    # Startpunkt einmal merken (on_touch feuert nur beim ersten Antippen)
     - lambda: |-
-        if (!id(g_pressed)) { id(g_pressed) = true; id(g_x0) = touch.x; id(g_y0) = touch.y; }
+        id(g_x0) = touch.x; id(g_y0) = touch.y;
         id(g_xl) = touch.x; id(g_yl) = touch.y;
+  on_update:
+    # Während des Wischens die aktuelle Fingerposition mitschreiben
+    - lambda: |-
+        if (!touches.empty()) { id(g_xl) = touches[0].x; id(g_yl) = touches[0].y; }
   on_release:
     - lambda: |-
         int dx = id(g_xl) - id(g_x0);
         int dy = id(g_yl) - id(g_y0);
-        id(g_pressed) = false;
+        ESP_LOGD("gest", "x0=%d xl=%d dx=%d dy=%d tile=%d", id(g_x0), id(g_xl), dx, dy, id(g_tile));
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
           // Wischen -> Kachel wechseln (6 Kacheln)
           if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 6;
@@ -638,6 +644,7 @@ script:
       - lambda: |-
           int t = id(g_tile);
           int step = (delta > 0) ? 1 : -1;          // Knob: 1 Detent = 1 Schritt
+          ESP_LOGD("knob", "step delta=%d tile=%d fan=%d", delta, t, id(g_fan_speed));
           if (t == 0) {                              // Ventilator: ±1 Stufe (0..6)
             int v = id(g_fan_speed) + step; if (v < 0) v = 0; if (v > 6) v = 6;
             if (v != id(g_fan_speed)) { id(g_fan_speed) = v; id(act_fan_apply).execute(); }

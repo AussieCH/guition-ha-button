@@ -133,16 +133,23 @@ touchscreen:
     - lambda: |-
         int dx = id(g_xl) - id(g_x0);
         int dy = id(g_yl) - id(g_y0);
-        ESP_LOGD("gest", "x0=%d xl=%d dx=%d dy=%d tile=%d", id(g_x0), id(g_xl), dx, dy, id(g_tile));
+        int t = id(g_tile);
+        // Im Farbmenü: jede vertikale Wischgeste = zurück; sonst nichts
+        if (id(g_submode) == 1) {
+          if (abs(dy) > 50 && abs(dy) > abs(dx)) id(exit_color).execute();
+          return;
+        }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
-          // Wischen -> Kachel wechseln (6 Kacheln)
+          // Horizontal wischen -> Kachel wechseln (6 Kacheln)
           if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 6;
           else        id(g_tile) = (id(g_tile) + 5) % 6;
           id(render).execute();
+        } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
+          // Vertikal wischen: nach unten auf Licht-Kachel -> Farbmenü
+          if (dy > 0 && t >= 2) id(enter_color).execute();
         } else if (abs(dx) < 25 && abs(dy) < 25) {
           // Tippen -> schalten, ABER nicht wenn auf dem Aktions-Button
           // (der hat seinen eigenen on_click). Button-Mitte ~ (180, 260), 64px.
-          int t = id(g_tile);
           bool btn_shown = (t == 0 || t >= 2);
           bool on_btn = btn_shown && abs(id(g_xl) - 180) <= 40 && abs(id(g_yl) - 260) <= 40;
           if (!on_btn) id(tap_action).execute();
@@ -190,6 +197,12 @@ globals:
   - { id: g_color_idx, type: int, restore_value: no, initial_value: '0' }   # aktuelles Farb-Preset
   - { id: g_set_pct, type: int, restore_value: no, initial_value: '0' }     # Scratch: Helligkeit für act_light_bri
   - { id: g_ltarget, type: std::string, restore_value: no, initial_value: '""' }  # Ziel-Entity(s) der aktiven Licht-Kachel
+  # Farbmenü (Unterseite auf Licht-Kacheln)
+  - { id: g_submode, type: int, restore_value: no, initial_value: '0' }  # 0=Kachel, 1=Farbmenü
+  - { id: g_hue, type: int, restore_value: no, initial_value: '0' }      # 0..359 Farbton
+  - { id: g_cr, type: int, restore_value: no, initial_value: '255' }     # aus Hue berechnetes RGB
+  - { id: g_cg, type: int, restore_value: no, initial_value: '0' }
+  - { id: g_cb, type: int, restore_value: no, initial_value: '0' }
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
@@ -599,6 +612,33 @@ lvgl:
             text_font: font_dots
             text_color: 0x888888
             text: "•·····"
+    # Farbmenü-Seite (Swipe runter auf Licht-Kacheln öffnet sie, Swipe hoch zurück)
+    - id: page_color
+      bg_color: 0x000000
+      widgets:
+        - label:
+            id: w_col_title
+            align: TOP_MID
+            y: 46
+            text_font: font_name
+            text_color: 0xFFFFFF
+            text: "Farbe"
+        - obj:
+            id: w_col_prev
+            align: CENTER
+            width: 168
+            height: 168
+            radius: 84
+            bg_color: 0xFF0000
+            border_width: 4
+            border_color: 0xFFFFFF
+        - label:
+            id: w_col_hint
+            align: BOTTOM_MID
+            y: -34
+            text_font: font_dots
+            text_color: 0x888888
+            text: "Knob = Farbe · hoch wischen = zurück"
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step
@@ -694,7 +734,15 @@ script:
       - lambda: |-
           int t = id(g_tile);
           int step = (delta > 0) ? 1 : -1;          // Knob: 1 Detent = 1 Schritt
-          ESP_LOGD("knob", "step delta=%d tile=%d fan=%d", delta, t, id(g_fan_speed));
+          if (id(g_submode) == 1) {                  // Farbmenü: Hue drehen + live anwenden
+            int h = id(g_hue) + step * 10;
+            while (h < 0) h += 360; while (h >= 360) h -= 360;
+            id(g_hue) = h;
+            id(calc_rgb).execute();
+            id(act_light_hue).execute();
+            id(render_color).execute();
+            return;
+          }
           if (t == 0) {                              // Ventilator: ±1 Stufe (0..6)
             int v = id(g_fan_speed) + step; if (v < 0) v = 0; if (v > 6) v = 6;
             if (v != id(g_fan_speed)) { id(g_fan_speed) = v; id(act_fan_apply).execute(); }
@@ -786,3 +834,54 @@ script:
             id(g_color_idx) = (id(g_color_idx) + 1) % 6;
             id(act_light_color).execute();
           }
+
+  # --- Farbmenü ---
+  # Hue (0..359) -> RGB (S=V=1) in g_cr/g_cg/g_cb
+  - id: calc_rgb
+    then:
+      - lambda: |-
+          float hh = id(g_hue) / 60.0f;
+          int i = ((int) hh) % 6; if (i < 0) i += 6;
+          float f = hh - (int) hh;
+          float r = 0, g = 0, b = 0;
+          switch (i) {
+            case 0: r = 1;     g = f;     b = 0;     break;
+            case 1: r = 1 - f; g = 1;     b = 0;     break;
+            case 2: r = 0;     g = 1;     b = f;     break;
+            case 3: r = 0;     g = 1 - f; b = 1;     break;
+            case 4: r = f;     g = 0;     b = 1;     break;
+            default: r = 1;    g = 0;     b = 1 - f; break;
+          }
+          id(g_cr) = (int)(r * 255); id(g_cg) = (int)(g * 255); id(g_cb) = (int)(b * 255);
+  # Farbmenü-Seite zeichnen (Titel + Vorschau-Kreis)
+  - id: render_color
+    then:
+      - lambda: |-
+          int t = id(g_tile);
+          lv_label_set_text(id(w_col_title),
+            (t == 2) ? "Licht (alle)" : (t == 3) ? "Gradient" : (t == 4) ? "Lightstrip" : (t == 5) ? "Stehlampe" : "Farbe");
+          uint32_t col = ((uint32_t) id(g_cr) << 16) | ((uint32_t) id(g_cg) << 8) | (uint32_t) id(g_cb);
+          lv_obj_set_style_bg_color(id(w_col_prev), lv_color_hex(col), LV_PART_MAIN);
+          lv_obj_invalidate(id(w_col_prev));
+  - id: enter_color
+    then:
+      - lambda: 'id(g_submode) = 1; id(calc_rgb).execute(); id(render_color).execute();'
+      - lvgl.page.show: page_color
+  - id: exit_color
+    then:
+      - lambda: 'id(g_submode) = 0;'
+      - lvgl.page.show: page_main
+      - lambda: 'id(render).execute();'
+  # Farbe an HA senden (rgb_color aus g_cr/g_cg/g_cb; schaltet auch ein)
+  - id: act_light_hue
+    then:
+      - homeassistant.action:
+          action: light.turn_on
+          data:
+            entity_id: !lambda 'return id(g_ltarget);'
+          variables:
+            r: !lambda 'return id(g_cr);'
+            g: !lambda 'return id(g_cg);'
+            b: !lambda 'return id(g_cb);'
+          data_template:
+            rgb_color: "{{ [r, g, b] }}"

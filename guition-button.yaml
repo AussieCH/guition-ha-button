@@ -57,6 +57,19 @@ psram:
 logger:
   level: INFO               # DEBUG/VERBOSE nur zur Diagnose
 
+# Diagnose-Daten fürs System-Menü (freier Heap, Loop-Zeit)
+debug:
+  update_interval: 5s
+
+# System-Kachel alle paar Sekunden neu zeichnen (Sensoren triggern kein Render)
+interval:
+  - interval: 3s
+    then:
+      - if:
+          condition: { lambda: 'return id(g_tile) == 7;' }
+          then:
+            - script.execute: render
+
 api:
   encryption:
     key: !secret api_key
@@ -143,9 +156,9 @@ touchscreen:
           return;
         }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
-          // Horizontal wischen -> Kachel wechseln (7 Kacheln)
-          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 7;
-          else        id(g_tile) = (id(g_tile) + 6) % 7;
+          // Horizontal wischen -> Kachel wechseln (8 Kacheln)
+          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 8;
+          else        id(g_tile) = (id(g_tile) + 7) % 8;
           id(render).execute();
         } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
           // Vertikal wischen: nach unten auf Einzel-Lampe (3..5) -> Farbmenü
@@ -268,6 +281,21 @@ sensor:
     attribute: brightness
     on_value:
       - lambda: 'id(g_li_pct)[2] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+  # --- System-Info (Kachel 7) ---
+  - platform: debug
+    free:
+      id: sys_free          # freier Heap (Bytes)
+    loop_time:
+      id: sys_loop          # max. Loop-Zeit (ms) als Last-Indikator
+  - platform: adc           # Akku am Board-ADC GPIO6 (~10k/10k -> x2)
+    pin: GPIO6
+    id: bat_volt
+    attenuation: 12db
+    update_interval: 10s
+    samples: 64
+    filters:
+      - multiply: 2.0
+      - exponential_moving_average: { alpha: 0.2, send_every: 1 }
 
 ###############################################################################
 # DISPLAY  (ST77916 QSPI, 360x360, RGB565, Farben invertiert)
@@ -490,6 +518,11 @@ font:
     size: 22
     glyphsets: [GF_Latin_Core]
     ignore_missing_glyphs: true
+  - file: "gfonts://Roboto"
+    id: font_sys
+    size: 26
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
   # Material-Design-Icons (TTF wird beim Kompilieren geladen -> Build-Host braucht Internet)
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: font_icon
@@ -502,6 +535,7 @@ font:
       - "\U000F1051"   # mdi:led-strip-variant (Gradient/Lightstrip)
       - "\U000F08DD"   # mdi:floor-lamp (Stehlampe)
       - "\U000F0035"   # mdi:apple (Apple TV)
+      - "\U000F061A"   # mdi:chip (System-Info)
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: font_icon_sm
     size: 40
@@ -560,6 +594,16 @@ lvgl:
             text_font: font_val
             text_color: 0x3DA9FC
             text: "--"
+        # Mehrzeilige System-Info (nur auf Kachel 7 sichtbar, sonst versteckt)
+        - label:
+            id: w_sys
+            align: CENTER
+            y: 10
+            text_align: CENTER
+            text_font: font_sys
+            text_color: 0xFFFFFF
+            hidden: true
+            text: ""
         # Aktions-Button: Ventilator -> Umkehren, Licht -> Farb-Preset.
         # Auf Storen versteckt. Icon + Funktion setzt das render-Script.
         - button:
@@ -661,7 +705,7 @@ lvgl:
             y: 148
             text_font: font_dots
             text_color: 0x888888
-            text: "•······"
+            text: "•·······"
     # Farbmenü-Seite (Swipe runter auf Licht-Kacheln öffnet sie, Swipe hoch zurück)
     - id: page_color
       bg_color: 0x000000
@@ -692,9 +736,9 @@ script:
     then:
       - lambda: |-
           int t = id(g_tile);
-          // Punkt-Indikator (7 Kacheln): • aktiv, · inaktiv
+          // Punkt-Indikator (8 Kacheln): • aktiv, · inaktiv
           std::string d;
-          for (int i = 0; i < 7; i++) d += (i == t) ? "•" : "·";
+          for (int i = 0; i < 8; i++) d += (i == t) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
           // Aktions-Button: Ventilator(0)=Umkehren, Einzel-Lampen(3..5)=Farbe.
           // "Licht alle"(2), Storen(1), Apple TV(6) haben KEINEN Mittel-Button.
@@ -719,6 +763,14 @@ script:
           } else {
             lv_obj_add_flag(id(w_cover_open), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(w_cover_close), LV_OBJ_FLAG_HIDDEN);
+          }
+          // System-Kachel (7): mehrzeiliges Info-Label statt großem Wert
+          if (t == 7) {
+            lv_obj_add_flag(id(w_val), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_sys), LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_clear_flag(id(w_val), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_sys), LV_OBJ_FLAG_HIDDEN);
           }
           char buf[16];
           if (t == 0) {                              // Ventilator (Stufe 0..6)
@@ -762,13 +814,27 @@ script:
             if (id(g_li_on)[k]) snprintf(buf, sizeof(buf), "%d%%", id(g_li_pct)[k]);
             else                snprintf(buf, sizeof(buf), "Aus");
             lv_label_set_text(id(w_val), buf);
-          } else {                                   // Apple TV (6)
+          } else if (t == 6) {                       // Apple TV
             lv_label_set_text(id(w_icon), "\U000F0035");   // mdi:apple
             lv_label_set_text(id(w_name), "Apple TV");
             lv_arc_set_range(id(w_arc), 0, 100);
             lv_arc_set_value(id(w_arc), 0);
             const char* s = (id(g_tv_state) == 1) ? "Läuft" : (id(g_tv_state) == 2) ? "Pause" : "Aus";
             lv_label_set_text(id(w_val), s);
+          } else {                                   // System-Info (7)
+            lv_label_set_text(id(w_icon), "\U000F061A");   // mdi:chip
+            lv_label_set_text(id(w_name), "System");
+            // Akku-% grob aus Spannung (3.20V=0%, 4.10V=100%)
+            float v = id(bat_volt).has_state() ? id(bat_volt).state : 0.0f;
+            int bpct = (int)((v - 3.20f) / (4.10f - 3.20f) * 100.0f + 0.5f);
+            if (bpct < 0) bpct = 0; if (bpct > 100) bpct = 100;
+            lv_arc_set_range(id(w_arc), 0, 100);
+            lv_arc_set_value(id(w_arc), bpct);
+            float freeKB = id(sys_free).has_state() ? id(sys_free).state / 1024.0f : 0.0f;
+            float loopms = id(sys_loop).has_state() ? id(sys_loop).state : 0.0f;
+            char sb[96];
+            snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\nAkku: %d %%  (%.2f V)", freeKB, loopms, bpct, v);
+            lv_label_set_text(id(w_sys), sb);
           }
 
   # --- Tippen: aktive Kachel schalten ---
@@ -823,9 +889,11 @@ script:
             int v = id(g_li_pct)[k] + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;
             id(g_li_pct)[k] = v; id(g_set_pct) = v;
             id(act_light_on).execute();
-          } else {                                   // Apple TV (6): Lautstärke
+          } else if (t == 6) {                       // Apple TV: Lautstärke
             if (step > 0) id(act_tv_volup).execute();
             else          id(act_tv_voldn).execute();
+          } else {                                   // System-Info (7): Knob ohne Funktion
+            // nichts
           }
       - lambda: 'id(render).execute();'
 

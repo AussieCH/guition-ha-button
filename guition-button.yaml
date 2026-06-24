@@ -639,7 +639,7 @@ script:
             lv_label_set_text(id(w_val), buf);
           } else if (t == 1) {                       // Storen (nur auf/zu)
             lv_label_set_text(id(w_icon), "\U000F111C");
-            lv_label_set_text(id(w_name), "Storen");
+            lv_label_set_text(id(w_name), "Storen TV");
             lv_arc_set_range(id(w_arc), 0, 100);
             lv_arc_set_value(id(w_arc), id(g_cover_pos));
             if      (id(g_cover_pos) >= 99) snprintf(buf, sizeof(buf), "Offen");

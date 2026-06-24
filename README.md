@@ -5,11 +5,29 @@ ESP32-S3). Ein schlankes Steuer-Panel für drei Entitäten im Wohnzimmer:
 
 | Kachel | Tippen | Knob drehen |
 |--------|--------|-------------|
-| **Ventilator** | An/Aus (`fan.toggle`) | Drehzahl 0–100 % |
-| **Storen** (Garten) | Auf / Zu (je nach Position) | Position 0–100 % |
-| **Licht** | An/Aus (`light.toggle`) | Helligkeit 0–100 % |
+| **Ventilator** | – (Umkehren-Button mittig) | Stufe ±1 (Stop, 1–6) |
+| **Storen** (Garten) | Auf / Zu (je nach Position) | Position ±10 % |
+| **Licht** | An/Aus (`light.toggle`) | Helligkeit ±10 % |
 
 **Horizontal wischen** wechselt die Kachel (3 Punkte unten zeigen die aktive an).
+
+### Ventilator (RF über HA-Scripts)
+
+Der Ventilator hat **kein `fan`-Entity** und keinen Rückkanal — er wird per Funk
+über HA-Scripts geschaltet. Die aktuelle Stufe wird **lokal auf dem Gerät** gehalten
+(0 = Stop, 1–6), Dial im Uhrzeigersinn erhöht, gegen den Uhrzeigersinn senkt. Pro
+Stufenwechsel wird `script.turn_on` mit dem passenden Script gerufen:
+
+| Stufe | Script | | Stufe | Script |
+|---|---|---|---|---|
+| 0 | `…_stop` | | 4 | `…_speed_3_duplizieren` |
+| 1 | `…_speed_1_t` | | 5 | `…_speed_5` |
+| 2 | `…_speed_2` | | 6 | `…_speed_6` |
+| 3 | `…_speed_3` | | ↺ | `…_umkehren` (Button) |
+
+Die Script-Namen sind in `act_fan_apply` / `act_fan_reverse` in
+[`guition-button.yaml`](guition-button.yaml) hinterlegt. Da kein Rückkanal existiert,
+kann die Anzeige von der Realität abweichen, wenn der Lüfter anderswo geschaltet wird.
 
 ## Einrichten
 

@@ -6,7 +6,7 @@ ESP32-S3). Ein schlankes Steuer-Panel für drei Entitäten im Wohnzimmer:
 | Kachel | Tippen | Knob drehen |
 |--------|--------|-------------|
 | **Ventilator** | – (Umkehren-Button mittig) | Stufe ±1 (Stop, 1–6) |
-| **Storen** (Garten) | Auf / Zu (je nach Position) | Position ±10 % |
+| **Storen** | Auf / Zu (je nach Position) | rechts = auf, links = zu |
 | **Licht** | An/Aus (`light.toggle`) | Helligkeit ±10 % |
 
 **Horizontal wischen** wechselt die Kachel (3 Punkte unten zeigen die aktive an).

@@ -529,12 +529,14 @@ script:
             if (id(g_fan_speed) == 0) snprintf(buf, sizeof(buf), "Stop");
             else                      snprintf(buf, sizeof(buf), "Stufe %d", id(g_fan_speed));
             lv_label_set_text(id(w_val), buf);
-          } else if (t == 1) {                       // Storen
+          } else if (t == 1) {                       // Storen (nur auf/zu)
             lv_label_set_text(id(w_icon), "\U000F11D9");
             lv_label_set_text(id(w_name), "Storen");
             lv_arc_set_range(id(w_arc), 0, 100);
             lv_arc_set_value(id(w_arc), id(g_cover_pos));
-            snprintf(buf, sizeof(buf), "%d%%", id(g_cover_pos));
+            if      (id(g_cover_pos) >= 99) snprintf(buf, sizeof(buf), "Offen");
+            else if (id(g_cover_pos) <= 1)  snprintf(buf, sizeof(buf), "Zu");
+            else                            snprintf(buf, sizeof(buf), "%d%%", id(g_cover_pos));
             lv_label_set_text(id(w_val), buf);
           } else {                                   // Licht
             lv_label_set_text(id(w_icon), "\U000F0335");
@@ -570,10 +572,9 @@ script:
           if (t == 0) {                              // Ventilator: ±1 Stufe (0..6)
             int v = id(g_fan_speed) + step; if (v < 0) v = 0; if (v > 6) v = 6;
             if (v != id(g_fan_speed)) { id(g_fan_speed) = v; id(act_fan_apply).execute(); }
-          } else if (t == 1) {                       // Storen: ±10 % Position
-            int v = id(g_cover_pos) + step * 10; if (v < 0) v = 0; if (v > 100) v = 100;
-            id(g_cover_pos) = v;
-            id(act_cover_set).execute();
+          } else if (t == 1) {                       // Storen: Dial = auf / zu
+            if (step > 0) id(act_cover_open).execute();
+            else          id(act_cover_close).execute();
           } else {                                   // Licht: ±10 % Helligkeit
             int v = id(g_light_pct) + step * 10; if (v < 0) v = 0; if (v > 100) v = 100;
             id(g_light_pct) = v;
@@ -609,11 +610,6 @@ script:
   - id: act_cover_close
     then:
       - homeassistant.action: { action: cover.close_cover, data: { entity_id: "${cover_entity}" } }
-  - id: act_cover_set
-    then:
-      - homeassistant.action:
-          action: cover.set_cover_position
-          data: { entity_id: "${cover_entity}", position: !lambda 'return id(g_cover_pos);' }
   - id: act_light_toggle
     then:
       - homeassistant.action: { action: light.toggle, data: { entity_id: "${light_entity}" } }

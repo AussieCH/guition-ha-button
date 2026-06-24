@@ -16,8 +16,10 @@ substitutions:
   timezone: "Europe/Zurich"
 
   # >>> HIER deine Home-Assistant-Entitäten eintragen <<<
-  # Ventilator: RF -> über HA-Scripts gesteuert (kein Entity, kein Rückkanal).
+  # Ventilator: RF -> über HA-Scripts gesteuert. Die Scripts setzen den Helfer
+  #   input_number.fan_wohnzimmer_speed (0..6) -> daraus lesen wir die Ist-Stufe.
   #   Stufen-Scripts sind in act_fan_apply / act_fan_reverse hart hinterlegt.
+  fan_speed_entity: "input_number.fan_wohnzimmer_speed"
   cover_entity: "cover.wohnzimmer_storen_garten"
   light_entity: "light.wohnzimmer"
 
@@ -159,7 +161,7 @@ globals:
   - { id: g_y0, type: int, restore_value: no, initial_value: '0' }
   - { id: g_xl, type: int, restore_value: no, initial_value: '0' }
   - { id: g_yl, type: int, restore_value: no, initial_value: '0' }
-  - { id: g_fan_speed, type: int, restore_value: yes, initial_value: '0' }  # 0=Stop, 1..6 (lokal, RF ohne Rückkanal)
+  - { id: g_fan_speed, type: int, restore_value: yes, initial_value: '0' }  # 0=Stop, 1..6 (Ist-Wert aus input_number, bis HA verbunden ist letzter Stand)
   - { id: g_cover_pos,type: int,  restore_value: no, initial_value: '0' }   # 0=zu 100=offen
   - { id: g_light_on, type: bool, restore_value: no, initial_value: 'false' }
   - { id: g_light_pct,type: int,  restore_value: no, initial_value: '0' }
@@ -176,6 +178,11 @@ text_sensor:
       - lambda: 'id(render).execute();'
 
 sensor:
+  - platform: homeassistant
+    id: ha_fan_speed
+    entity_id: ${fan_speed_entity}        # Ist-Stufe 0..6 (von den RF-Scripts gesetzt)
+    on_value:
+      - lambda: 'id(g_fan_speed) = isnan(x) ? 0 : (int)(x + 0.5f); id(render).execute();'
   - platform: homeassistant
     id: ha_cover_pos
     entity_id: ${cover_entity}

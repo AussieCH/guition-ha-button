@@ -25,6 +25,9 @@ substitutions:
   light1_entity: "light.gradient_lightstrip_wohnzimmer"
   light2_entity: "light.lightstrip_wohnzimmer"
   light3_entity: "light.stehlampe_wohnzimmer"
+  # Apple TV (Esszimmer)
+  tv_media_entity: "media_player.tv_esszimmer"
+  tv_remote_entity: "remote.tv_esszimmer"
 
 esphome:
   name: ${name}
@@ -140,17 +143,17 @@ touchscreen:
           return;
         }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
-          // Horizontal wischen -> Kachel wechseln (6 Kacheln)
-          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 6;
-          else        id(g_tile) = (id(g_tile) + 5) % 6;
+          // Horizontal wischen -> Kachel wechseln (7 Kacheln)
+          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 7;
+          else        id(g_tile) = (id(g_tile) + 6) % 7;
           id(render).execute();
         } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
           // Vertikal wischen: nach unten auf Einzel-Lampe (3..5) -> Farbmenü
-          if (dy > 0 && t >= 3) id(enter_color).execute();
+          if (dy > 0 && t >= 3 && t <= 5) id(enter_color).execute();
         } else if (abs(dx) < 25 && abs(dy) < 25) {
           // Tippen -> schalten, ABER nicht wenn auf dem Aktions-Button
           // (der hat seinen eigenen on_click). Button-Mitte ~ (180, 260), 64px.
-          bool btn_shown = (t == 0 || t >= 2);
+          bool btn_shown = (t == 0 || (t >= 3 && t <= 5));
           bool on_btn = btn_shown && abs(id(g_xl) - 180) <= 40 && abs(id(g_yl) - 260) <= 40;
           if (!on_btn) id(tap_action).execute();
         }
@@ -203,6 +206,7 @@ globals:
   - { id: g_cr, type: int, restore_value: no, initial_value: '255' }     # aus Hue berechnetes RGB
   - { id: g_cg, type: int, restore_value: no, initial_value: '0' }
   - { id: g_cb, type: int, restore_value: no, initial_value: '0' }
+  - { id: g_tv_state, type: int, restore_value: no, initial_value: '0' }  # 0=aus 1=läuft 2=pause 3=bereit
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
@@ -223,6 +227,16 @@ text_sensor:
     entity_id: ${light3_entity}
     on_value:
       - lambda: 'id(g_li_on)[2] = (x == "on"); id(render).execute();'
+  - platform: homeassistant
+    id: ha_tv_state
+    entity_id: ${tv_media_entity}
+    on_value:
+      - lambda: |-
+          if (x == "playing") id(g_tv_state) = 1;
+          else if (x == "paused") id(g_tv_state) = 2;
+          else if (x == "off" || x == "standby" || x == "unavailable") id(g_tv_state) = 0;
+          else id(g_tv_state) = 3;   // idle/on/bereit
+          id(render).execute();
 
 sensor:
   - platform: homeassistant
@@ -487,6 +501,7 @@ font:
       - "\U000F1253"   # mdi:lightbulb-group (Sammel-Kachel)
       - "\U000F1051"   # mdi:led-strip-variant (Gradient/Lightstrip)
       - "\U000F08DD"   # mdi:floor-lamp (Stehlampe)
+      - "\U000F0035"   # mdi:apple (Apple TV)
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: font_icon_sm
     size: 40
@@ -496,6 +511,9 @@ font:
       - "\U000F03D8"   # mdi:palette (Farb-Preset wechseln)
       - "\U000F0737"   # mdi:arrow-up-bold (Storen öffnen)
       - "\U000F072E"   # mdi:arrow-down-bold (Storen schließen)
+      - "\U000F03E4"   # mdi:pause (Apple TV)
+      - "\U000F040A"   # mdi:play (Apple TV)
+      - "\U000F0425"   # mdi:power (Apple TV alles aus)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -605,13 +623,62 @@ lvgl:
                   text: "\U000F072E"
             on_click:
               - lambda: 'id(act_cover_close).execute();'
+        # Apple-TV-Buttons (nur auf Kachel 6): Pause / Weiter / Alles aus
+        - button:
+            id: w_tv_pause
+            align: CENTER
+            x: -100
+            y: 80
+            width: 64
+            height: 64
+            radius: 18
+            bg_color: 0x1A2230
+            border_width: 2
+            border_color: 0x3DA9FC
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x3DA9FC, text: "\U000F03E4" }
+            on_click:
+              - lambda: 'id(act_tv_pause).execute();'
+        - button:
+            id: w_tv_play
+            align: CENTER
+            x: 0
+            y: 80
+            width: 64
+            height: 64
+            radius: 18
+            bg_color: 0x1A2230
+            border_width: 2
+            border_color: 0x3DA9FC
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x3DA9FC, text: "\U000F040A" }
+            on_click:
+              - lambda: 'id(act_tv_play).execute();'
+        - button:
+            id: w_tv_off
+            align: CENTER
+            x: 100
+            y: 80
+            width: 64
+            height: 64
+            radius: 18
+            bg_color: 0x2A1A1A
+            border_width: 2
+            border_color: 0xC0504D
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xC0504D, text: "\U000F0425" }
+            on_click:
+              - lambda: 'id(act_tv_off).execute();'
         - label:
             id: w_dots
             align: CENTER
             y: 148
             text_font: font_dots
             text_color: 0x888888
-            text: "•·····"
+            text: "•······"
     # Farbmenü-Seite (Swipe runter auf Licht-Kacheln öffnet sie, Swipe hoch zurück)
     - id: page_color
       bg_color: 0x000000
@@ -642,17 +709,27 @@ script:
     then:
       - lambda: |-
           int t = id(g_tile);
-          // Punkt-Indikator (6 Kacheln): • aktiv, · inaktiv
+          // Punkt-Indikator (7 Kacheln): • aktiv, · inaktiv
           std::string d;
-          for (int i = 0; i < 6; i++) d += (i == t) ? "•" : "·";
+          for (int i = 0; i < 7; i++) d += (i == t) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
           // Aktions-Button: Ventilator(0)=Umkehren, Einzel-Lampen(3..5)=Farbe.
-          // "Licht alle"(2) hat KEINEN Button (reiner Master-Dimmer), Storen(1) auch nicht.
-          if (t == 0 || t >= 3) {
+          // "Licht alle"(2), Storen(1), Apple TV(6) haben KEINEN Mittel-Button.
+          if (t == 0 || (t >= 3 && t <= 5)) {
             lv_obj_clear_flag(id(w_btn), LV_OBJ_FLAG_HIDDEN);
             lv_label_set_text(id(w_btnico), (t == 0) ? "\U000F006A" : "\U000F03D8");
           } else {
             lv_obj_add_flag(id(w_btn), LV_OBJ_FLAG_HIDDEN);
+          }
+          // Apple-TV-Kachel (6): drei Buttons Pause / Weiter / Alles aus
+          if (t == 6) {
+            lv_obj_clear_flag(id(w_tv_pause), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tv_play),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tv_off),   LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(w_tv_pause), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tv_play),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tv_off),   LV_OBJ_FLAG_HIDDEN);
           }
           // Storen-Kachel (1): zwei Buttons Öffnen/Schließen statt Mittel-Button
           if (t == 1) {
@@ -692,7 +769,7 @@ script:
             if (n) snprintf(buf, sizeof(buf), "%d%%", avg);
             else   snprintf(buf, sizeof(buf), "Aus");
             lv_label_set_text(id(w_val), buf);
-          } else {                                   // Einzel-Lampe (3=Gradient 4=Lightstrip 5=Stehlampe)
+          } else if (t >= 3 && t <= 5) {             // Einzel-Lampe (3=Gradient 4=Lightstrip 5=Stehlampe)
             int k = t - 3;
             if      (t == 3) id(g_ltarget) = "${light1_entity}";
             else if (t == 4) id(g_ltarget) = "${light2_entity}";
@@ -704,6 +781,13 @@ script:
             if (id(g_li_on)[k]) snprintf(buf, sizeof(buf), "%d%%", id(g_li_pct)[k]);
             else                snprintf(buf, sizeof(buf), "Aus");
             lv_label_set_text(id(w_val), buf);
+          } else {                                   // Apple TV (6)
+            lv_label_set_text(id(w_icon), "\U000F0035");   // mdi:apple
+            lv_label_set_text(id(w_name), "Apple TV");
+            lv_arc_set_range(id(w_arc), 0, 100);
+            lv_arc_set_value(id(w_arc), 0);
+            const char* s = (id(g_tv_state) == 1) ? "Läuft" : (id(g_tv_state) == 2) ? "Pause" : (id(g_tv_state) == 0) ? "Aus" : "Bereit";
+            lv_label_set_text(id(w_val), s);
           }
 
   # --- Tippen: aktive Kachel schalten ---
@@ -719,8 +803,10 @@ script:
             bool any = id(g_li_on)[0] || id(g_li_on)[1] || id(g_li_on)[2];
             if (any) id(act_light_off).execute();    // g_ltarget = alle 3 (von render gesetzt)
             else     id(act_group_on).execute();
-          } else {                                   // Einzel-Lampe: toggeln
+          } else if (t >= 3 && t <= 5) {             // Einzel-Lampe: toggeln
             id(act_light_toggle).execute();
+          } else {                                   // Apple TV (6): Tippen ohne Funktion (Buttons)
+            // nichts
           }
 
   # --- Knob: Wert der aktiven Kachel um delta ändern + an HA senden ---
@@ -751,11 +837,14 @@ script:
               id(g_li_pct)[k] = v;
             }
             id(act_group_dim).execute();
-          } else {                                   // Einzel-Lampe: ±5 % Helligkeit
+          } else if (t >= 3 && t <= 5) {             // Einzel-Lampe: ±5 % Helligkeit
             int k = t - 3;
             int v = id(g_li_pct)[k] + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;
             id(g_li_pct)[k] = v; id(g_set_pct) = v;
             id(act_light_on).execute();
+          } else {                                   // Apple TV (6): Lautstärke
+            if (step > 0) id(act_tv_volup).execute();
+            else          id(act_tv_voldn).execute();
           }
       - lambda: 'id(render).execute();'
 
@@ -835,6 +924,23 @@ script:
       - homeassistant.action:
           action: light.turn_on
           data: { entity_id: !lambda 'return id(g_ltarget);' }
+
+  # --- Apple TV ---
+  - id: act_tv_pause
+    then:
+      - homeassistant.action: { action: media_player.media_pause, data: { entity_id: "${tv_media_entity}" } }
+  - id: act_tv_play
+    then:
+      - homeassistant.action: { action: media_player.media_play, data: { entity_id: "${tv_media_entity}" } }
+  - id: act_tv_off            # Alles aus
+    then:
+      - homeassistant.action: { action: media_player.turn_off, data: { entity_id: "${tv_media_entity}" } }
+  - id: act_tv_volup
+    then:
+      - homeassistant.action: { action: media_player.volume_up, data: { entity_id: "${tv_media_entity}" } }
+  - id: act_tv_voldn
+    then:
+      - homeassistant.action: { action: media_player.volume_down, data: { entity_id: "${tv_media_entity}" } }
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:
       - homeassistant.action:
@@ -858,7 +964,7 @@ script:
           int t = id(g_tile);
           if (t == 0) {
             id(act_fan_reverse).execute();
-          } else if (t >= 3) {
+          } else if (t >= 3 && t <= 5) {
             id(enter_color).execute();      // Paletten-Icon = Farbmenü (nur Einzel-Lampen)
           }
 

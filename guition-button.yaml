@@ -36,6 +36,7 @@ esphome:
     priority: -100
     then:
       - lambda: 'id(render).execute();'
+      - script.execute: idle_timer
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -141,12 +142,17 @@ touchscreen:
     - lambda: |-
         id(g_x0) = touch.x; id(g_y0) = touch.y;
         id(g_xl) = touch.x; id(g_yl) = touch.y;
+        if (id(g_disp_off)) { id(g_was_off) = true; id(wake_display).execute(); }
+        else { id(g_was_off) = false; id(idle_timer).execute(); }
   on_update:
     # Während des Wischens die aktuelle Fingerposition mitschreiben
     - lambda: |-
         if (!touches.empty()) { id(g_xl) = touches[0].x; id(g_yl) = touches[0].y; }
   on_release:
     - lambda: |-
+        id(idle_timer).execute();
+        // War das Display aus, war diese Berührung nur zum Wecken -> keine Aktion
+        if (id(g_was_off)) { id(g_was_off) = false; return; }
         int dx = id(g_xl) - id(g_x0);
         int dy = id(g_yl) - id(g_y0);
         int t = id(g_tile);
@@ -179,13 +185,17 @@ binary_sensor:
     internal: true
     pin: { number: GPIO2, inverted: true, mode: { input: true, pullup: true } }
     on_press:
-      - lambda: 'id(knob_step).execute(-10);'
+      - lambda: |-
+          if (id(g_disp_off)) { id(wake_display).execute(); }
+          else { id(idle_timer).execute(); id(knob_step).execute(-10); }
   - platform: gpio
     name: "Knob rechts"
     internal: true
     pin: { number: GPIO1, inverted: true, mode: { input: true, pullup: true } }
     on_press:
-      - lambda: 'id(knob_step).execute(10);'
+      - lambda: |-
+          if (id(g_disp_off)) { id(wake_display).execute(); }
+          else { id(idle_timer).execute(); id(knob_step).execute(10); }
 
 ###############################################################################
 # GLOBALS
@@ -220,6 +230,9 @@ globals:
   - { id: g_cg, type: int, restore_value: no, initial_value: '0' }
   - { id: g_cb, type: int, restore_value: no, initial_value: '0' }
   - { id: g_tv_state, type: int, restore_value: no, initial_value: '0' }  # media_player: 0=Aus 1=Läuft 2=Pause/wach
+  # Display-Sleep
+  - { id: g_disp_off, type: bool, restore_value: no, initial_value: 'false' }  # Backlight aus (idle)
+  - { id: g_was_off,  type: bool, restore_value: no, initial_value: 'false' }  # diese Berührung war nur Wecken
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
@@ -994,6 +1007,19 @@ script:
   - id: act_tv_voldn
     then:
       - homeassistant.action: { action: media_player.volume_down, data: { entity_id: "${tv_media_entity}" } }
+
+  # --- Display-Sleep ---
+  - id: idle_timer            # nach 60s ohne Interaktion Backlight aus
+    mode: restart
+    then:
+      - delay: 60s
+      - lambda: 'id(g_disp_off) = true;'
+      - light.turn_off: backlight_light
+  - id: wake_display          # Backlight an + Timer neu starten
+    then:
+      - lambda: 'id(g_disp_off) = false;'
+      - light.turn_on: backlight_light
+      - script.execute: idle_timer
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:
       - homeassistant.action:

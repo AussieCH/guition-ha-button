@@ -982,8 +982,9 @@ script:
           std::string d;
           for (int i = 0; i < 9; i++) d += (i == t) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
-          // Arc-Farbe standardmäßig blau (Timer-Kachel überschreibt sie je Timer-Farbe)
+          // Arc-Farbe standardmäßig blau, Icon weiß (Timer-Kachel überschreibt beides je Timer-Farbe)
           lv_obj_set_style_arc_color(id(w_arc), lv_color_hex(0x3DA9FC), LV_PART_INDICATOR);
+          lv_obj_set_style_text_color(id(w_icon), lv_color_hex(0xFFFFFF), LV_PART_MAIN);
           // Aktions-Button: Ventilator(0)=Umkehren, Einzel-Lampen(3..5)=Farbe.
           // "Licht alle"(2), Storen(1), Apple TV(6) haben KEINEN Mittel-Button.
           if (t == 0 || (t >= 3 && t <= 5)) {
@@ -1120,7 +1121,9 @@ script:
             if (addmode) { ci = 0; for (int i = 0; i < 5; i++) if (id(g_tmr)[i] == 0) { ci = i; break; } }
             else ci = id(g_tmr_sel);
             if (ci < 0 || ci > 4) ci = 0;
-            lv_obj_set_style_arc_color(id(w_arc), lv_color_make(C[ci][0], C[ci][1], C[ci][2]), LV_PART_INDICATOR);
+            lv_color_t tc = lv_color_make(C[ci][0], C[ci][1], C[ci][2]);
+            lv_obj_set_style_arc_color(id(w_arc), tc, LV_PART_INDICATOR);
+            lv_obj_set_style_text_color(id(w_icon), tc, LV_PART_MAIN);  // Uhr-Icon in Timer-Farbe
           }
 
   # --- Tippen: aktive Kachel schalten ---

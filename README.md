@@ -138,6 +138,12 @@ Nach **60 s ohne Bedienung** geht das Backlight aus; Touch oder Knob weckt wiede
 esphome logs guition-button.yaml --device <ip-oder-hostname>
 ```
 
+## Board-Referenz
+
+Pinout, ESPHome-Komponenten-Wahl und die wichtigsten Gotchas für dieses Board sind in
+[`docs/guition-jc3636k718c.md`](docs/guition-jc3636k718c.md) gesammelt (Knob ist kein
+Quadratur-Encoder, Strapping-Pins, 16-MB-Flash, LVGL-Performance, Lambda-Fallen …).
+
 ---
 
-*Board-Referenz und Pinout: [esphome-guition-jc3636k718c-va](https://github.com/MichalZaniewicz/esphome-guition-jc3636k718c-va).*
+*Ursprüngliche Board-Referenz / Voice-Assistant-Repo: [esphome-guition-jc3636k718c-va](https://github.com/MichalZaniewicz/esphome-guition-jc3636k718c-va).*

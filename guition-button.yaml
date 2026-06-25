@@ -311,7 +311,8 @@ globals:
   # Timer
   - { id: g_timer_set, type: int, restore_value: no, initial_value: '5' }      # eingestellte Minuten (0..180)
   - { id: g_tone_idx,  type: int, restore_value: yes, initial_value: '0' }     # 0..2 gewählte Tonfolge
-  - { id: g_tmr_sel,     type: int,  restore_value: no, initial_value: '0' }      # in der Liste ausgewählter Timer-Slot
+  - { id: g_tmr_sel,     type: int,  restore_value: no, initial_value: '0' }      # ausgewählter Timer-Slot (Scroll)
+  - { id: g_add_mode,    type: bool, restore_value: no, initial_value: 'false' }  # Timer-Kachel: + aktiv -> Wheel stellt Zeit
   - { id: g_alarm,       type: bool, restore_value: no, initial_value: 'false' }  # Timer abgelaufen, klingelt
   - { id: g_alarm_color, type: int,  restore_value: no, initial_value: '0' }     # 0=rot 1=grün 2=blau (Slot)
   - { id: g_blink_on,    type: bool, restore_value: no, initial_value: 'false' }  # Blink-Toggle
@@ -652,6 +653,7 @@ font:
       - "\U000F0387"   # mdi:music-note (Ton wählen)
       - "\U000F0156"   # mdi:close (einzelnen Timer abbrechen)
       - "\U000F0415"   # mdi:plus (neuen Timer hinzufügen)
+      - "\U000F012C"   # mdi:check (neuen Timer bestätigen/starten)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -829,9 +831,9 @@ lvgl:
             border_color: 0x49C56B
             hidden: true
             widgets:
-              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x49C56B, text: "\U000F0415" }
+              - label: { id: w_tmr_addico, align: CENTER, text_font: font_icon_sm, text_color: 0x49C56B, text: "\U000F0415" }
             on_click:
-              - lambda: 'id(start_timer).execute();'
+              - lambda: 'id(timer_plus).execute();'
         - button:
             id: w_tmr_tone
             align: CENTER
@@ -1058,17 +1060,26 @@ script:
             lv_label_set_text(id(w_icon), "\U000F13AB");   // mdi:timer
             lv_label_set_text(id(w_name), "Timer");
             lv_arc_set_range(id(w_arc), 0, 180);
-            lv_arc_set_value(id(w_arc), id(g_timer_set));
-            snprintf(buf, sizeof(buf), "%d min", id(g_timer_set));
-            lv_label_set_text(id(w_val), buf);
-            // laufende Timer zählen + frühesten Rest finden
-            int cnt = 0, soon = 999999;
-            for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) { cnt++; if (id(g_tmr)[i] < soon) soon = id(g_tmr)[i]; }
-            char tb[48];
+            int n = 0; for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) n++;
+            bool addmode = id(g_add_mode) || (n == 0);
             const char* tn[] = { "Hummelflug", "Eye o.t. Tiger", "Für Elise" };
             const char* nm = tn[id(g_tone_idx)];
-            if (cnt > 0) snprintf(tb, sizeof(tb), "%d aktiv  %d:%02d   %s", cnt, soon / 60, soon % 60, nm);
-            else         snprintf(tb, sizeof(tb), "Ton: %s", nm);
+            // +-Button: Add-Modus -> Häkchen (bestätigen), sonst Plus
+            lv_label_set_text(id(w_tmr_addico), addmode ? "\U000F012C" : "\U000F0415");
+            char tb[48];
+            if (addmode) {                            // neue Zeit einstellen (Wheel)
+              lv_arc_set_value(id(w_arc), id(g_timer_set));
+              snprintf(buf, sizeof(buf), "%d min", id(g_timer_set));
+              lv_label_set_text(id(w_val), buf);
+              snprintf(tb, sizeof(tb), "neuer Timer · Ton: %s", nm);
+            } else {                                  // durch laufende Timer scrollen (Wheel)
+              if (id(g_tmr)[id(g_tmr_sel)] <= 0) { for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) { id(g_tmr_sel) = i; break; } }
+              int rem = id(g_tmr)[id(g_tmr_sel)];
+              lv_arc_set_value(id(w_arc), rem / 60);
+              snprintf(buf, sizeof(buf), "%d:%02d", rem / 60, rem % 60);
+              lv_label_set_text(id(w_val), buf);
+              snprintf(tb, sizeof(tb), "Timer %d von %d aktiv", id(g_tmr_sel) + 1, n);
+            }
             lv_label_set_text(id(w_tmr_info), tb);
           }
 
@@ -1148,10 +1159,21 @@ script:
             else          id(act_tv_voldn).execute();
           } else if (t == 7) {                       // System-Info: Knob ohne Funktion
             // nichts
-          } else {                                   // Timer (8): Minuten einstellen 0..180
-            int v = id(g_timer_set) + step * ${timer_min_per_click};
-            if (v < 0) v = 0; if (v > 180) v = 180;
-            id(g_timer_set) = v;
+          } else {                                   // Timer (8)
+            int n = 0; for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) n++;
+            bool addmode = id(g_add_mode) || (n == 0);
+            if (addmode) {                           // + aktiv: Minuten einstellen 0..180
+              int v = id(g_timer_set) + step * ${timer_min_per_click};
+              if (v < 0) v = 0; if (v > 180) v = 180;
+              id(g_timer_set) = v;
+            } else {                                 // sonst: durch laufende Timer scrollen
+              int act[3], m = 0;
+              for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) act[m++] = i;
+              int pos = 0;
+              for (int j = 0; j < m; j++) if (act[j] == id(g_tmr_sel)) pos = j;
+              pos = (pos + (step > 0 ? 1 : -1) + m) % m;
+              id(g_tmr_sel) = act[pos];
+            }
           }
       - lambda: 'id(render).execute();'
 
@@ -1274,6 +1296,14 @@ script:
           for (int i = 0; i < 3; i++) {
             if (id(g_tmr)[i] == 0) { id(g_tmr)[i] = id(g_timer_set) * 60; break; }
           }
+      - script.execute: render
+  - id: timer_plus            # +-Button: erst Zeit-Modus, beim 2. Tipp (✓) Timer hinzufügen
+    then:
+      - lambda: |-
+          int n = 0; for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) n++;
+          bool addmode = id(g_add_mode) || (n == 0);
+          if (addmode) { id(start_timer).execute(); id(g_add_mode) = false; }
+          else         { id(g_add_mode) = true; }
       - script.execute: render
   - id: cancel_all            # alle Timer abbrechen + Alarm/Ton/Ring stoppen
     then:

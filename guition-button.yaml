@@ -311,6 +311,7 @@ globals:
   # Timer
   - { id: g_timer_set, type: int, restore_value: no, initial_value: '5' }      # eingestellte Minuten (0..180)
   - { id: g_tone_idx,  type: int, restore_value: yes, initial_value: '0' }     # 0..2 gewählte Tonfolge
+  - { id: g_tmr_sel,     type: int,  restore_value: no, initial_value: '0' }      # in der Liste ausgewählter Timer-Slot
   - { id: g_alarm,       type: bool, restore_value: no, initial_value: 'false' }  # Timer abgelaufen, klingelt
   - { id: g_alarm_color, type: int,  restore_value: no, initial_value: '0' }     # 0=rot 1=grün 2=blau (Slot)
   - { id: g_blink_on,    type: bool, restore_value: no, initial_value: 'false' }  # Blink-Toggle
@@ -650,6 +651,7 @@ font:
       - "\U000F04DB"   # mdi:stop (Timer abbrechen)
       - "\U000F0387"   # mdi:music-note (Ton wählen)
       - "\U000F0156"   # mdi:close (einzelnen Timer abbrechen)
+      - "\U000F0415"   # mdi:plus (neuen Timer hinzufügen)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -812,13 +814,14 @@ lvgl:
             text_color: 0xBBBBBB
             hidden: true
             text: ""
-        # Timer-Buttons (nur auf Kachel 8): Start / Abbrechen / Ton
+        # Timer-Buttons (nur auf Kachel 8): + (Timer hinzufügen) / Ton.
+        # Stoppen einzelner Timer = Swipe up (Liste). Kein Alle-Stop-Button mehr.
         - button:
             id: w_tmr_start
             align: CENTER
-            x: -100
+            x: -55
             y: 86
-            width: 64
+            width: 72
             height: 64
             radius: 18
             bg_color: 0x16241A
@@ -826,31 +829,15 @@ lvgl:
             border_color: 0x49C56B
             hidden: true
             widgets:
-              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x49C56B, text: "\U000F040A" }
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x49C56B, text: "\U000F0415" }
             on_click:
               - lambda: 'id(start_timer).execute();'
         - button:
-            id: w_tmr_cancel
-            align: CENTER
-            x: 0
-            y: 86
-            width: 64
-            height: 64
-            radius: 18
-            bg_color: 0x2A1A1A
-            border_width: 2
-            border_color: 0xC0504D
-            hidden: true
-            widgets:
-              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xC0504D, text: "\U000F04DB" }
-            on_click:
-              - lambda: 'id(cancel_all).execute();'
-        - button:
             id: w_tmr_tone
             align: CENTER
-            x: 100
+            x: 55
             y: 86
-            width: 64
+            width: 72
             height: 64
             radius: 18
             bg_color: 0x1A2230
@@ -996,15 +983,13 @@ script:
           }
           // Timer-Kachel (8): Info-Label + 3 Buttons
           if (t == 8) {
-            lv_obj_clear_flag(id(w_tmr_info),   LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(id(w_tmr_start),  LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(id(w_tmr_cancel), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_clear_flag(id(w_tmr_tone),   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tmr_info),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tmr_start), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tmr_tone),  LV_OBJ_FLAG_HIDDEN);
           } else {
-            lv_obj_add_flag(id(w_tmr_info),   LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(w_tmr_start),  LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(w_tmr_cancel), LV_OBJ_FLAG_HIDDEN);
-            lv_obj_add_flag(id(w_tmr_tone),   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tmr_info),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tmr_start), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tmr_tone),  LV_OBJ_FLAG_HIDDEN);
           }
           char buf[16];
           if (t == 0) {                              // Ventilator (Stufe 0..6)
@@ -1122,7 +1107,18 @@ script:
             id(render_color).execute();
             return;
           }
-          if (id(g_submode) == 2) return;            // Timer-Liste: Knob ohne Funktion
+          if (id(g_submode) == 2) {                  // Timer-Liste: Auswahl durch laufende Timer scrollen
+            int act[3], n = 0;
+            for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) act[n++] = i;
+            if (n > 0) {
+              int pos = 0;
+              for (int j = 0; j < n; j++) if (act[j] == id(g_tmr_sel)) pos = j;
+              pos = (pos + (step > 0 ? 1 : -1) + n) % n;
+              id(g_tmr_sel) = act[pos];
+              id(render_timers).execute();
+            }
+            return;
+          }
           if (t == 0) {                              // Ventilator: ~4 Klicks pro Stufe (Rad 32 Klicks/360°, Bogen ~300°)
             int K = ${fan_clicks_per_stage};
             id(g_fan_clicks) += step;
@@ -1311,22 +1307,23 @@ script:
   - id: render_timers         # Zeilen je Slot füllen/verstecken
     then:
       - lambda: |-
-          char b[24];
+          char b[28];
+          int sel = id(g_tmr_sel);
           // Slot 0
           if (id(g_tmr)[0] > 0) {
-            snprintf(b, sizeof(b), "Timer 1   %d:%02d", id(g_tmr)[0] / 60, id(g_tmr)[0] % 60);
+            snprintf(b, sizeof(b), "%sTimer 1   %d:%02d", sel == 0 ? "> " : "  ", id(g_tmr)[0] / 60, id(g_tmr)[0] % 60);
             lv_label_set_text(id(w_tl0), b);
             lv_obj_clear_flag(id(w_tl0), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc0), LV_OBJ_FLAG_HIDDEN);
           } else { lv_obj_add_flag(id(w_tl0), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc0), LV_OBJ_FLAG_HIDDEN); }
           // Slot 1
           if (id(g_tmr)[1] > 0) {
-            snprintf(b, sizeof(b), "Timer 2   %d:%02d", id(g_tmr)[1] / 60, id(g_tmr)[1] % 60);
+            snprintf(b, sizeof(b), "%sTimer 2   %d:%02d", sel == 1 ? "> " : "  ", id(g_tmr)[1] / 60, id(g_tmr)[1] % 60);
             lv_label_set_text(id(w_tl1), b);
             lv_obj_clear_flag(id(w_tl1), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc1), LV_OBJ_FLAG_HIDDEN);
           } else { lv_obj_add_flag(id(w_tl1), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc1), LV_OBJ_FLAG_HIDDEN); }
           // Slot 2
           if (id(g_tmr)[2] > 0) {
-            snprintf(b, sizeof(b), "Timer 3   %d:%02d", id(g_tmr)[2] / 60, id(g_tmr)[2] % 60);
+            snprintf(b, sizeof(b), "%sTimer 3   %d:%02d", sel == 2 ? "> " : "  ", id(g_tmr)[2] / 60, id(g_tmr)[2] % 60);
             lv_label_set_text(id(w_tl2), b);
             lv_obj_clear_flag(id(w_tl2), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc2), LV_OBJ_FLAG_HIDDEN);
           } else { lv_obj_add_flag(id(w_tl2), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc2), LV_OBJ_FLAG_HIDDEN); }
@@ -1334,7 +1331,11 @@ script:
           lv_label_set_text(id(w_tl_title), any ? "Aktive Timer" : "Keine Timer");
   - id: enter_timers
     then:
-      - lambda: 'id(g_submode) = 2; id(render_timers).execute();'
+      - lambda: |-
+          id(g_submode) = 2;
+          // Auswahl auf den ersten laufenden Timer setzen
+          for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) { id(g_tmr_sel) = i; break; }
+          id(render_timers).execute();
       - lvgl.page.show: page_timers
   - id: exit_timers
     then:

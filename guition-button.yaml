@@ -87,7 +87,8 @@ interval:
             id(play_tone).execute();
             if (id(g_disp_off)) id(wake_display).execute();
           }
-          if (id(g_tile) == 8) id(render).execute();
+          if (id(g_submode) == 2) id(render_timers).execute();
+          else if (id(g_tile) == 8) id(render).execute();
   # Ring-Blinken während eines Timer-Alarms (Farbe = Slot: 0 rot, 1 grün, 2 blau)
   - interval: 0.4s
     then:
@@ -228,14 +229,20 @@ touchscreen:
           if (abs(dy) > 50 && abs(dy) > abs(dx)) id(exit_color).execute();
           return;
         }
+        // In der Timer-Liste: jede vertikale Wischgeste = zurück
+        if (id(g_submode) == 2) {
+          if (abs(dy) > 50 && abs(dy) > abs(dx)) id(exit_timers).execute();
+          return;
+        }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
           // Horizontal wischen -> Kachel wechseln (9 Kacheln)
           if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 9;
           else        id(g_tile) = (id(g_tile) + 8) % 9;
           id(render).execute();
         } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
-          // Vertikal wischen: nach unten auf Einzel-Lampe (3..5) -> Farbmenü
-          if (dy > 0 && t >= 3 && t <= 5) id(enter_color).execute();
+          // Vertikal wischen: hoch -> aktive Timer; runter auf Einzel-Lampe (3..5) -> Farbmenü
+          if (dy < 0) id(enter_timers).execute();
+          else if (t >= 3 && t <= 5) id(enter_color).execute();
         } else if (abs(dx) < 25 && abs(dy) < 25) {
           // Tippen -> schalten, ABER nicht wenn auf dem Aktions-Button
           // (der hat seinen eigenen on_click). Button-Mitte ~ (180, 260), 64px.
@@ -642,6 +649,7 @@ font:
       - "\U000F040A"   # mdi:play (Timer Start)
       - "\U000F04DB"   # mdi:stop (Timer abbrechen)
       - "\U000F0387"   # mdi:music-note (Ton wählen)
+      - "\U000F0156"   # mdi:close (einzelnen Timer abbrechen)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -880,6 +888,66 @@ lvgl:
             bg_color: 0xFF0000
             border_width: 4
             border_color: 0xFFFFFF
+    # Aktive-Timer-Liste (Swipe up öffnet sie, Swipe down zurück)
+    - id: page_timers
+      bg_color: 0x000000
+      widgets:
+        - label: { id: w_tl_title, align: TOP_MID, y: 36, text_font: font_name, text_color: 0xFFFFFF, text: "Aktive Timer" }
+        # Zeile 0 (rot)
+        - label: { id: w_tl0, align: CENTER, x: -28, y: -46, text_font: font_sys, text_color: 0xFF6B6B, hidden: true, text: "" }
+        - button:
+            id: w_tc0
+            align: CENTER
+            x: 128
+            y: -46
+            width: 56
+            height: 50
+            radius: 14
+            bg_color: 0x2A1A1A
+            border_width: 2
+            border_color: 0xFF6B6B
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xFF6B6B, text: "\U000F0156" }
+            on_click:
+              - lambda: 'id(cancel_one).execute(0);'
+        # Zeile 1 (grün)
+        - label: { id: w_tl1, align: CENTER, x: -28, y: 8, text_font: font_sys, text_color: 0x66CC80, hidden: true, text: "" }
+        - button:
+            id: w_tc1
+            align: CENTER
+            x: 128
+            y: 8
+            width: 56
+            height: 50
+            radius: 14
+            bg_color: 0x16241A
+            border_width: 2
+            border_color: 0x66CC80
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x66CC80, text: "\U000F0156" }
+            on_click:
+              - lambda: 'id(cancel_one).execute(1);'
+        # Zeile 2 (blau)
+        - label: { id: w_tl2, align: CENTER, x: -28, y: 62, text_font: font_sys, text_color: 0x66AAFF, hidden: true, text: "" }
+        - button:
+            id: w_tc2
+            align: CENTER
+            x: 128
+            y: 62
+            width: 56
+            height: 50
+            radius: 14
+            bg_color: 0x16202A
+            border_width: 2
+            border_color: 0x66AAFF
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x66AAFF, text: "\U000F0156" }
+            on_click:
+              - lambda: 'id(cancel_one).execute(2);'
+        - label: { id: w_tl_hint, align: BOTTOM_MID, y: -30, text_font: font_dots, text_color: 0x888888, text: "runter wischen = zurück" }
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step
@@ -1054,6 +1122,7 @@ script:
             id(render_color).execute();
             return;
           }
+          if (id(g_submode) == 2) return;            // Timer-Liste: Knob ohne Funktion
           if (t == 0) {                              // Ventilator: ~4 Klicks pro Stufe (Rad 32 Klicks/360°, Bogen ~300°)
             int K = ${fan_clicks_per_stage};
             id(g_fan_clicks) += step;
@@ -1237,6 +1306,48 @@ script:
             default: // Für Elise
               return "elise:d=8,o=5,b=125:e6,d#6,e6,d#6,e6,b,d6,c6,a,p,c,e,a,b,p,e,g#,b,c6,p,e,e6,d#6,e6,d#6,e6,b,d6,c6,a,p,c,e,a,b,p,e,c6,b,a";
           }
+
+  # --- Aktive-Timer-Liste (Swipe up) ---
+  - id: render_timers         # Zeilen je Slot füllen/verstecken
+    then:
+      - lambda: |-
+          char b[24];
+          // Slot 0
+          if (id(g_tmr)[0] > 0) {
+            snprintf(b, sizeof(b), "Timer 1   %d:%02d", id(g_tmr)[0] / 60, id(g_tmr)[0] % 60);
+            lv_label_set_text(id(w_tl0), b);
+            lv_obj_clear_flag(id(w_tl0), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc0), LV_OBJ_FLAG_HIDDEN);
+          } else { lv_obj_add_flag(id(w_tl0), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc0), LV_OBJ_FLAG_HIDDEN); }
+          // Slot 1
+          if (id(g_tmr)[1] > 0) {
+            snprintf(b, sizeof(b), "Timer 2   %d:%02d", id(g_tmr)[1] / 60, id(g_tmr)[1] % 60);
+            lv_label_set_text(id(w_tl1), b);
+            lv_obj_clear_flag(id(w_tl1), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc1), LV_OBJ_FLAG_HIDDEN);
+          } else { lv_obj_add_flag(id(w_tl1), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc1), LV_OBJ_FLAG_HIDDEN); }
+          // Slot 2
+          if (id(g_tmr)[2] > 0) {
+            snprintf(b, sizeof(b), "Timer 3   %d:%02d", id(g_tmr)[2] / 60, id(g_tmr)[2] % 60);
+            lv_label_set_text(id(w_tl2), b);
+            lv_obj_clear_flag(id(w_tl2), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc2), LV_OBJ_FLAG_HIDDEN);
+          } else { lv_obj_add_flag(id(w_tl2), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc2), LV_OBJ_FLAG_HIDDEN); }
+          bool any = id(g_tmr)[0] > 0 || id(g_tmr)[1] > 0 || id(g_tmr)[2] > 0;
+          lv_label_set_text(id(w_tl_title), any ? "Aktive Timer" : "Keine Timer");
+  - id: enter_timers
+    then:
+      - lambda: 'id(g_submode) = 2; id(render_timers).execute();'
+      - lvgl.page.show: page_timers
+  - id: exit_timers
+    then:
+      - lambda: 'id(g_submode) = 0;'
+      - lvgl.page.show: page_main
+      - lambda: 'id(render).execute();'
+  - id: cancel_one            # einen Timer-Slot abbrechen
+    parameters: { slot: int }
+    then:
+      - lambda: |-
+          if (slot >= 0 && slot < 3) id(g_tmr)[slot] = 0;
+      - script.execute: render_timers
+
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:
       - homeassistant.action:

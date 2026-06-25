@@ -77,7 +77,7 @@ interval:
     then:
       - lambda: |-
           bool was_alarm = id(g_alarm);
-          for (int i = 0; i < 3; i++) {
+          for (int i = 0; i < 5; i++) {
             if (id(g_tmr)[i] > 0) {
               id(g_tmr)[i]--;
               if (id(g_tmr)[i] == 0) { id(g_alarm) = true; id(g_alarm_color) = i; }
@@ -103,9 +103,9 @@ interval:
                       id: ring_light
                       transition_length: 0s
                       brightness: 100%
-                      red:   !lambda 'return id(g_alarm_color) == 0 ? 1.0 : 0.0;'
-                      green: !lambda 'return id(g_alarm_color) == 1 ? 1.0 : 0.0;'
-                      blue:  !lambda 'return id(g_alarm_color) == 2 ? 1.0 : 0.0;'
+                      red:   !lambda 'const uint8_t C[5][3]={{255,48,48},{255,140,0},{240,208,0},{64,200,96},{64,144,255}}; int i=id(g_alarm_color); if(i<0||i>4)i=0; return C[i][0]/255.0f;'
+                      green: !lambda 'const uint8_t C[5][3]={{255,48,48},{255,140,0},{240,208,0},{64,200,96},{64,144,255}}; int i=id(g_alarm_color); if(i<0||i>4)i=0; return C[i][1]/255.0f;'
+                      blue:  !lambda 'const uint8_t C[5][3]={{255,48,48},{255,140,0},{240,208,0},{64,200,96},{64,144,255}}; int i=id(g_alarm_color); if(i<0||i>4)i=0; return C[i][2]/255.0f;'
                 else:
                   - light.turn_off: { id: ring_light, transition_length: 0s }
 
@@ -317,9 +317,9 @@ globals:
   - { id: g_alarm_color, type: int,  restore_value: no, initial_value: '0' }     # 0=rot 1=grün 2=blau (Slot)
   - { id: g_blink_on,    type: bool, restore_value: no, initial_value: 'false' }  # Blink-Toggle
   - id: g_tmr
-    type: int[3]
+    type: int[5]
     restore_value: no
-    initial_value: '{0, 0, 0}'       # Restsekunden je Timer-Slot (0 = frei); Slot 0=rot 1=grün 2=blau
+    initial_value: '{0, 0, 0, 0, 0}'  # Restsekunden je Timer-Slot (0=frei); Farben: 0 rot 1 orange 2 gelb 3 grün 4 blau
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
@@ -881,17 +881,17 @@ lvgl:
     - id: page_timers
       bg_color: 0x000000
       widgets:
-        - label: { id: w_tl_title, align: TOP_MID, y: 36, text_font: font_name, text_color: 0xFFFFFF, text: "Aktive Timer" }
-        # Zeile 0 (rot)
-        - label: { id: w_tl0, align: CENTER, x: -28, y: -46, text_font: font_sys, text_color: 0xFF6B6B, hidden: true, text: "" }
+        - label: { id: w_tl_title, align: TOP_MID, y: 18, text_font: font_dots, text_color: 0xFFFFFF, text: "Aktive Timer" }
+        # 5 Zeilen (Farben: rot, orange, gelb, grün, blau)
+        - label: { id: w_tl0, align: CENTER, x: -24, y: -82, text_font: font_dots, text_color: 0xFF6B6B, hidden: true, text: "" }
         - button:
             id: w_tc0
             align: CENTER
-            x: 128
-            y: -46
-            width: 56
-            height: 50
-            radius: 14
+            x: 132
+            y: -82
+            width: 52
+            height: 38
+            radius: 12
             bg_color: 0x2A1A1A
             border_width: 2
             border_color: 0xFF6B6B
@@ -900,16 +900,49 @@ lvgl:
               - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xFF6B6B, text: "\U000F0156" }
             on_click:
               - lambda: 'id(cancel_one).execute(0);'
-        # Zeile 1 (grün)
-        - label: { id: w_tl1, align: CENTER, x: -28, y: 8, text_font: font_sys, text_color: 0x66CC80, hidden: true, text: "" }
+        - label: { id: w_tl1, align: CENTER, x: -24, y: -41, text_font: font_dots, text_color: 0xFFA64D, hidden: true, text: "" }
         - button:
             id: w_tc1
             align: CENTER
-            x: 128
-            y: 8
-            width: 56
-            height: 50
-            radius: 14
+            x: 132
+            y: -41
+            width: 52
+            height: 38
+            radius: 12
+            bg_color: 0x2A2010
+            border_width: 2
+            border_color: 0xFFA64D
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xFFA64D, text: "\U000F0156" }
+            on_click:
+              - lambda: 'id(cancel_one).execute(1);'
+        - label: { id: w_tl2, align: CENTER, x: -24, y: 0, text_font: font_dots, text_color: 0xF0D000, hidden: true, text: "" }
+        - button:
+            id: w_tc2
+            align: CENTER
+            x: 132
+            y: 0
+            width: 52
+            height: 38
+            radius: 12
+            bg_color: 0x282410
+            border_width: 2
+            border_color: 0xF0D000
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xF0D000, text: "\U000F0156" }
+            on_click:
+              - lambda: 'id(cancel_one).execute(2);'
+        - label: { id: w_tl3, align: CENTER, x: -24, y: 41, text_font: font_dots, text_color: 0x66CC80, hidden: true, text: "" }
+        - button:
+            id: w_tc3
+            align: CENTER
+            x: 132
+            y: 41
+            width: 52
+            height: 38
+            radius: 12
             bg_color: 0x16241A
             border_width: 2
             border_color: 0x66CC80
@@ -917,17 +950,16 @@ lvgl:
             widgets:
               - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x66CC80, text: "\U000F0156" }
             on_click:
-              - lambda: 'id(cancel_one).execute(1);'
-        # Zeile 2 (blau)
-        - label: { id: w_tl2, align: CENTER, x: -28, y: 62, text_font: font_sys, text_color: 0x66AAFF, hidden: true, text: "" }
+              - lambda: 'id(cancel_one).execute(3);'
+        - label: { id: w_tl4, align: CENTER, x: -24, y: 82, text_font: font_dots, text_color: 0x66AAFF, hidden: true, text: "" }
         - button:
-            id: w_tc2
+            id: w_tc4
             align: CENTER
-            x: 128
-            y: 62
-            width: 56
-            height: 50
-            radius: 14
+            x: 132
+            y: 82
+            width: 52
+            height: 38
+            radius: 12
             bg_color: 0x16202A
             border_width: 2
             border_color: 0x66AAFF
@@ -935,8 +967,7 @@ lvgl:
             widgets:
               - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x66AAFF, text: "\U000F0156" }
             on_click:
-              - lambda: 'id(cancel_one).execute(2);'
-        - label: { id: w_tl_hint, align: BOTTOM_MID, y: -30, text_font: font_dots, text_color: 0x888888, text: "runter wischen = zurück" }
+              - lambda: 'id(cancel_one).execute(4);'
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step
@@ -951,6 +982,8 @@ script:
           std::string d;
           for (int i = 0; i < 9; i++) d += (i == t) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
+          // Arc-Farbe standardmäßig blau (Timer-Kachel überschreibt sie je Timer-Farbe)
+          lv_obj_set_style_arc_color(id(w_arc), lv_color_hex(0x3DA9FC), LV_PART_INDICATOR);
           // Aktions-Button: Ventilator(0)=Umkehren, Einzel-Lampen(3..5)=Farbe.
           // "Licht alle"(2), Storen(1), Apple TV(6) haben KEINEN Mittel-Button.
           if (t == 0 || (t >= 3 && t <= 5)) {
@@ -1060,7 +1093,7 @@ script:
             lv_label_set_text(id(w_icon), "\U000F13AB");   // mdi:timer
             lv_label_set_text(id(w_name), "Timer");
             lv_arc_set_range(id(w_arc), 0, 180);
-            int n = 0; for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) n++;
+            int n = 0; for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) n++;
             bool addmode = id(g_add_mode) || (n == 0);
             const char* tn[] = { "Hummelflug", "Eye o.t. Tiger", "Für Elise" };
             const char* nm = tn[id(g_tone_idx)];
@@ -1073,7 +1106,7 @@ script:
               lv_label_set_text(id(w_val), buf);
               snprintf(tb, sizeof(tb), "neuer Timer · Ton: %s", nm);
             } else {                                  // durch laufende Timer scrollen (Wheel)
-              if (id(g_tmr)[id(g_tmr_sel)] <= 0) { for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) { id(g_tmr_sel) = i; break; } }
+              if (id(g_tmr)[id(g_tmr_sel)] <= 0) { for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) { id(g_tmr_sel) = i; break; } }
               int rem = id(g_tmr)[id(g_tmr_sel)];
               lv_arc_set_value(id(w_arc), rem / 60);
               snprintf(buf, sizeof(buf), "%d:%02d", rem / 60, rem % 60);
@@ -1081,6 +1114,13 @@ script:
               snprintf(tb, sizeof(tb), "Timer %d von %d aktiv", id(g_tmr_sel) + 1, n);
             }
             lv_label_set_text(id(w_tmr_info), tb);
+            // Arc in der Farbe des angezeigten Timers (Add-Modus: nächster freier Slot)
+            const uint8_t C[5][3] = {{255,48,48},{255,140,0},{240,208,0},{64,200,96},{64,144,255}};
+            int ci;
+            if (addmode) { ci = 0; for (int i = 0; i < 5; i++) if (id(g_tmr)[i] == 0) { ci = i; break; } }
+            else ci = id(g_tmr_sel);
+            if (ci < 0 || ci > 4) ci = 0;
+            lv_obj_set_style_arc_color(id(w_arc), lv_color_make(C[ci][0], C[ci][1], C[ci][2]), LV_PART_INDICATOR);
           }
 
   # --- Tippen: aktive Kachel schalten ---
@@ -1119,8 +1159,8 @@ script:
             return;
           }
           if (id(g_submode) == 2) {                  // Timer-Liste: Auswahl durch laufende Timer scrollen
-            int act[3], n = 0;
-            for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) act[n++] = i;
+            int act[5], n = 0;
+            for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) act[n++] = i;
             if (n > 0) {
               int pos = 0;
               for (int j = 0; j < n; j++) if (act[j] == id(g_tmr_sel)) pos = j;
@@ -1160,15 +1200,15 @@ script:
           } else if (t == 7) {                       // System-Info: Knob ohne Funktion
             // nichts
           } else {                                   // Timer (8)
-            int n = 0; for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) n++;
+            int n = 0; for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) n++;
             bool addmode = id(g_add_mode) || (n == 0);
             if (addmode) {                           // + aktiv: Minuten einstellen 0..180
               int v = id(g_timer_set) + step * ${timer_min_per_click};
               if (v < 0) v = 0; if (v > 180) v = 180;
               id(g_timer_set) = v;
             } else {                                 // sonst: durch laufende Timer scrollen
-              int act[3], m = 0;
-              for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) act[m++] = i;
+              int act[5], m = 0;
+              for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) act[m++] = i;
               int pos = 0;
               for (int j = 0; j < m; j++) if (act[j] == id(g_tmr_sel)) pos = j;
               pos = (pos + (step > 0 ? 1 : -1) + m) % m;
@@ -1293,21 +1333,21 @@ script:
     then:
       - lambda: |-
           if (id(g_timer_set) <= 0) return;
-          for (int i = 0; i < 3; i++) {
+          for (int i = 0; i < 5; i++) {
             if (id(g_tmr)[i] == 0) { id(g_tmr)[i] = id(g_timer_set) * 60; break; }
           }
       - script.execute: render
   - id: timer_plus            # +-Button: erst Zeit-Modus, beim 2. Tipp (✓) Timer hinzufügen
     then:
       - lambda: |-
-          int n = 0; for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) n++;
+          int n = 0; for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) n++;
           bool addmode = id(g_add_mode) || (n == 0);
           if (addmode) { id(start_timer).execute(); id(g_add_mode) = false; }
           else         { id(g_add_mode) = true; }
       - script.execute: render
   - id: cancel_all            # alle Timer abbrechen + Alarm/Ton/Ring stoppen
     then:
-      - lambda: 'for (int i = 0; i < 3; i++) id(g_tmr)[i] = 0; id(g_alarm) = false;'
+      - lambda: 'for (int i = 0; i < 5; i++) id(g_tmr)[i] = 0; id(g_alarm) = false;'
       - rtttl.stop:
       - light.turn_off: ring_light
       - script.execute: render
@@ -1357,14 +1397,26 @@ script:
             lv_label_set_text(id(w_tl2), b);
             lv_obj_clear_flag(id(w_tl2), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc2), LV_OBJ_FLAG_HIDDEN);
           } else { lv_obj_add_flag(id(w_tl2), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc2), LV_OBJ_FLAG_HIDDEN); }
-          bool any = id(g_tmr)[0] > 0 || id(g_tmr)[1] > 0 || id(g_tmr)[2] > 0;
+          // Slot 3
+          if (id(g_tmr)[3] > 0) {
+            snprintf(b, sizeof(b), "%sTimer 4   %d:%02d", sel == 3 ? "> " : "  ", id(g_tmr)[3] / 60, id(g_tmr)[3] % 60);
+            lv_label_set_text(id(w_tl3), b);
+            lv_obj_clear_flag(id(w_tl3), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc3), LV_OBJ_FLAG_HIDDEN);
+          } else { lv_obj_add_flag(id(w_tl3), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc3), LV_OBJ_FLAG_HIDDEN); }
+          // Slot 4
+          if (id(g_tmr)[4] > 0) {
+            snprintf(b, sizeof(b), "%sTimer 5   %d:%02d", sel == 4 ? "> " : "  ", id(g_tmr)[4] / 60, id(g_tmr)[4] % 60);
+            lv_label_set_text(id(w_tl4), b);
+            lv_obj_clear_flag(id(w_tl4), LV_OBJ_FLAG_HIDDEN); lv_obj_clear_flag(id(w_tc4), LV_OBJ_FLAG_HIDDEN);
+          } else { lv_obj_add_flag(id(w_tl4), LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(id(w_tc4), LV_OBJ_FLAG_HIDDEN); }
+          bool any = id(g_tmr)[0] > 0 || id(g_tmr)[1] > 0 || id(g_tmr)[2] > 0 || id(g_tmr)[3] > 0 || id(g_tmr)[4] > 0;
           lv_label_set_text(id(w_tl_title), any ? "Aktive Timer" : "Keine Timer");
   - id: enter_timers
     then:
       - lambda: |-
           id(g_submode) = 2;
           // Auswahl auf den ersten laufenden Timer setzen
-          for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) { id(g_tmr_sel) = i; break; }
+          for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) { id(g_tmr_sel) = i; break; }
           id(render_timers).execute();
       - lvgl.page.show: page_timers
   - id: exit_timers
@@ -1376,7 +1428,7 @@ script:
     parameters: { slot: int }
     then:
       - lambda: |-
-          if (slot >= 0 && slot < 3) id(g_tmr)[slot] = 0;
+          if (slot >= 0 && slot < 5) id(g_tmr)[slot] = 0;
       - script.execute: render_timers
 
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)

@@ -21,6 +21,7 @@ substitutions:
   #   Stufen-Scripts sind in act_fan_apply / act_fan_reverse hart hinterlegt.
   fan_speed_entity: "input_number.fan_wohnzimmer_speed"
   fan_clicks_per_stage: "4"   # Rad = 32 Klicks/360°, Bogen ~300°/7 -> ~4 Klicks pro Stufe
+  timer_min_per_click: "1"    # Minuten pro Knob-Klick auf der Timer-Kachel (0..180)
   cover_entity: "cover.store_wohnzimmer_sud"
   # Drei Hue-Leuchten im Wohnzimmer (+ Sammel-Kachel steuert alle gemeinsam)
   light1_entity: "light.gradient_lightstrip_wohnzimmer"
@@ -71,6 +72,16 @@ interval:
           condition: { lambda: 'return id(g_tile) == 7;' }
           then:
             - script.execute: render
+  # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen
+  - interval: 1s
+    then:
+      - lambda: |-
+          bool fired = false;
+          for (int i = 0; i < 4; i++) {
+            if (id(g_tmr)[i] > 0) { id(g_tmr)[i]--; if (id(g_tmr)[i] == 0) fired = true; }
+          }
+          if (fired) { id(play_tone).execute(); if (id(g_disp_off)) id(wake_display).execute(); }
+          if (id(g_tile) == 8) id(render).execute();
 
 api:
   encryption:
@@ -132,6 +143,27 @@ light:
     use_dma: true
     restore_mode: RESTORE_DEFAULT_OFF
 
+# --- Audio (PCM5100A I2S-DAC + Speaker) für Timer-Töne ---
+i2s_audio:
+  i2s_lrclk_pin: GPIO45
+  i2s_bclk_pin: GPIO3
+
+speaker:
+  - platform: i2s_audio
+    id: spk
+    dac_type: external
+    i2s_dout_pin: GPIO42
+
+switch:
+  - platform: gpio          # DAC-MUTE auf GPIO46: HIGH = Ton an (beim Boot setzen)
+    pin: GPIO46
+    id: dac_unmute
+    restore_mode: ALWAYS_ON
+    internal: true
+
+rtttl:
+  speaker: spk
+
 touchscreen:
   platform: cst816
   id: my_touch
@@ -163,9 +195,9 @@ touchscreen:
           return;
         }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
-          // Horizontal wischen -> Kachel wechseln (8 Kacheln)
-          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 8;
-          else        id(g_tile) = (id(g_tile) + 7) % 8;
+          // Horizontal wischen -> Kachel wechseln (9 Kacheln)
+          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 9;
+          else        id(g_tile) = (id(g_tile) + 8) % 9;
           id(render).execute();
         } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
           // Vertikal wischen: nach unten auf Einzel-Lampe (3..5) -> Farbmenü
@@ -235,6 +267,13 @@ globals:
   # Display-Sleep
   - { id: g_disp_off, type: bool, restore_value: no, initial_value: 'false' }  # Backlight aus (idle)
   - { id: g_was_off,  type: bool, restore_value: no, initial_value: 'false' }  # diese Berührung war nur Wecken
+  # Timer
+  - { id: g_timer_set, type: int, restore_value: no, initial_value: '5' }      # eingestellte Minuten (0..180)
+  - { id: g_tone_idx,  type: int, restore_value: yes, initial_value: '0' }     # 0..2 gewählte Tonfolge
+  - id: g_tmr
+    type: int[4]
+    restore_value: no
+    initial_value: '{0, 0, 0, 0}'    # Restsekunden je Timer-Slot (0 = frei)
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
@@ -551,6 +590,7 @@ font:
       - "\U000F08DD"   # mdi:floor-lamp (Stehlampe)
       - "\U000F0035"   # mdi:apple (Apple TV)
       - "\U000F061A"   # mdi:chip (System-Info)
+      - "\U000F13AB"   # mdi:timer (Timer)
   - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
     id: font_icon_sm
     size: 40
@@ -562,6 +602,9 @@ font:
       - "\U000F072E"   # mdi:arrow-down-bold (Storen schließen)
       - "\U000F040E"   # mdi:play-pause (Apple TV Toggle)
       - "\U000F0425"   # mdi:power (Apple TV an/aus)
+      - "\U000F040A"   # mdi:play (Timer Start)
+      - "\U000F04DB"   # mdi:stop (Timer abbrechen)
+      - "\U000F0387"   # mdi:music-note (Ton wählen)
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -714,13 +757,72 @@ lvgl:
               - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xC0504D, text: "\U000F0425" }
             on_click:
               - lambda: 'id(act_tv_power).execute();'
+        # Timer-Info (laufende Timer + gewählter Ton), nur auf Kachel 8
+        - label:
+            id: w_tmr_info
+            align: CENTER
+            y: 44
+            text_align: CENTER
+            text_font: font_dots
+            text_color: 0xBBBBBB
+            hidden: true
+            text: ""
+        # Timer-Buttons (nur auf Kachel 8): Start / Abbrechen / Ton
+        - button:
+            id: w_tmr_start
+            align: CENTER
+            x: -100
+            y: 86
+            width: 64
+            height: 64
+            radius: 18
+            bg_color: 0x16241A
+            border_width: 2
+            border_color: 0x49C56B
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x49C56B, text: "\U000F040A" }
+            on_click:
+              - lambda: 'id(start_timer).execute();'
+        - button:
+            id: w_tmr_cancel
+            align: CENTER
+            x: 0
+            y: 86
+            width: 64
+            height: 64
+            radius: 18
+            bg_color: 0x2A1A1A
+            border_width: 2
+            border_color: 0xC0504D
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0xC0504D, text: "\U000F04DB" }
+            on_click:
+              - lambda: 'id(cancel_all).execute();'
+        - button:
+            id: w_tmr_tone
+            align: CENTER
+            x: 100
+            y: 86
+            width: 64
+            height: 64
+            radius: 18
+            bg_color: 0x1A2230
+            border_width: 2
+            border_color: 0x3DA9FC
+            hidden: true
+            widgets:
+              - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x3DA9FC, text: "\U000F0387" }
+            on_click:
+              - lambda: 'id(tone_cycle).execute();'
         - label:
             id: w_dots
             align: CENTER
             y: 148
             text_font: font_dots
             text_color: 0x888888
-            text: "•·······"
+            text: "•········"
     # Farbmenü-Seite (Swipe runter auf Licht-Kacheln öffnet sie, Swipe hoch zurück)
     - id: page_color
       bg_color: 0x000000
@@ -751,9 +853,9 @@ script:
     then:
       - lambda: |-
           int t = id(g_tile);
-          // Punkt-Indikator (8 Kacheln): • aktiv, · inaktiv
+          // Punkt-Indikator (9 Kacheln): • aktiv, · inaktiv
           std::string d;
-          for (int i = 0; i < 8; i++) d += (i == t) ? "•" : "·";
+          for (int i = 0; i < 9; i++) d += (i == t) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
           // Aktions-Button: Ventilator(0)=Umkehren, Einzel-Lampen(3..5)=Farbe.
           // "Licht alle"(2), Storen(1), Apple TV(6) haben KEINEN Mittel-Button.
@@ -786,6 +888,18 @@ script:
           } else {
             lv_obj_clear_flag(id(w_val), LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(id(w_sys), LV_OBJ_FLAG_HIDDEN);
+          }
+          // Timer-Kachel (8): Info-Label + 3 Buttons
+          if (t == 8) {
+            lv_obj_clear_flag(id(w_tmr_info),   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tmr_start),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tmr_cancel), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(id(w_tmr_tone),   LV_OBJ_FLAG_HIDDEN);
+          } else {
+            lv_obj_add_flag(id(w_tmr_info),   LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tmr_start),  LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tmr_cancel), LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(id(w_tmr_tone),   LV_OBJ_FLAG_HIDDEN);
           }
           char buf[16];
           if (t == 0) {                              // Ventilator (Stufe 0..6)
@@ -836,7 +950,7 @@ script:
             lv_arc_set_value(id(w_arc), 0);
             const char* s = (id(g_tv_state) == 1) ? "Läuft" : (id(g_tv_state) == 2) ? "Pause" : "Aus";
             lv_label_set_text(id(w_val), s);
-          } else {                                   // System-Info (7)
+          } else if (t == 7) {                       // System-Info
             lv_label_set_text(id(w_icon), "\U000F061A");   // mdi:chip
             lv_label_set_text(id(w_name), "System");
             // Akku-% grob aus Spannung (3.20V=0%, 4.10V=100%)
@@ -850,6 +964,20 @@ script:
             char sb[96];
             snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\nAkku: %d %%  (%.2f V)", freeKB, loopms, bpct, v);
             lv_label_set_text(id(w_sys), sb);
+          } else {                                   // Timer (8)
+            lv_label_set_text(id(w_icon), "\U000F13AB");   // mdi:timer
+            lv_label_set_text(id(w_name), "Timer");
+            lv_arc_set_range(id(w_arc), 0, 180);
+            lv_arc_set_value(id(w_arc), id(g_timer_set));
+            snprintf(buf, sizeof(buf), "%d min", id(g_timer_set));
+            lv_label_set_text(id(w_val), buf);
+            // laufende Timer zählen + frühesten Rest finden
+            int cnt = 0, soon = 999999;
+            for (int i = 0; i < 4; i++) if (id(g_tmr)[i] > 0) { cnt++; if (id(g_tmr)[i] < soon) soon = id(g_tmr)[i]; }
+            char tb[48];
+            if (cnt > 0) snprintf(tb, sizeof(tb), "%d aktiv  %d:%02d   Ton %d", cnt, soon / 60, soon % 60, id(g_tone_idx) + 1);
+            else         snprintf(tb, sizeof(tb), "Ton %d", id(g_tone_idx) + 1);
+            lv_label_set_text(id(w_tmr_info), tb);
           }
 
   # --- Tippen: aktive Kachel schalten ---
@@ -914,8 +1042,12 @@ script:
           } else if (t == 6) {                       // Apple TV: Lautstärke
             if (step > 0) id(act_tv_volup).execute();
             else          id(act_tv_voldn).execute();
-          } else {                                   // System-Info (7): Knob ohne Funktion
+          } else if (t == 7) {                       // System-Info: Knob ohne Funktion
             // nichts
+          } else {                                   // Timer (8): Minuten einstellen 0..180
+            int v = id(g_timer_set) + step * ${timer_min_per_click};
+            if (v < 0) v = 0; if (v > 180) v = 180;
+            id(g_timer_set) = v;
           }
       - lambda: 'id(render).execute();'
 
@@ -1029,6 +1161,34 @@ script:
       - lambda: 'id(g_disp_off) = false;'
       - light.turn_on: backlight_light
       - script.execute: idle_timer
+
+  # --- Timer ---
+  - id: start_timer           # neuen Timer mit g_timer_set Minuten in freiem Slot starten
+    then:
+      - lambda: |-
+          if (id(g_timer_set) <= 0) return;
+          for (int i = 0; i < 4; i++) {
+            if (id(g_tmr)[i] == 0) { id(g_tmr)[i] = id(g_timer_set) * 60; break; }
+          }
+      - script.execute: render
+  - id: cancel_all            # alle Timer abbrechen + evtl. Ton stoppen
+    then:
+      - lambda: 'for (int i = 0; i < 4; i++) id(g_tmr)[i] = 0;'
+      - rtttl.stop:
+      - script.execute: render
+  - id: tone_cycle            # Tonfolge weiterschalten + Vorschau abspielen
+    then:
+      - lambda: 'id(g_tone_idx) = (id(g_tone_idx) + 1) % 3;'
+      - script.execute: play_tone
+      - script.execute: render
+  - id: play_tone             # gewählte Tonfolge über den Speaker spielen
+    then:
+      - rtttl.play: !lambda |-
+          switch (id(g_tone_idx)) {
+            case 0:  return "beeps:d=16,o=6,b=120:c,p,c,p,c";
+            case 1:  return "rise:d=8,o=5,b=140:c,e,g,c6,e6,g6";
+            default: return "chime:d=4,o=6,b=100:8e5,8g5,8c,8e,2c";
+          }
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:
       - homeassistant.action:

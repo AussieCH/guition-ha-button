@@ -1012,8 +1012,10 @@ script:
             int cnt = 0, soon = 999999;
             for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) { cnt++; if (id(g_tmr)[i] < soon) soon = id(g_tmr)[i]; }
             char tb[48];
-            if (cnt > 0) snprintf(tb, sizeof(tb), "%d aktiv  %d:%02d   Ton %d", cnt, soon / 60, soon % 60, id(g_tone_idx) + 1);
-            else         snprintf(tb, sizeof(tb), "Ton %d", id(g_tone_idx) + 1);
+            const char* tn[] = { "Hummelflug", "Eye o.t. Tiger", "Für Elise" };
+            const char* nm = tn[id(g_tone_idx)];
+            if (cnt > 0) snprintf(tb, sizeof(tb), "%d aktiv  %d:%02d   %s", cnt, soon / 60, soon % 60, nm);
+            else         snprintf(tb, sizeof(tb), "Ton: %s", nm);
             lv_label_set_text(id(w_tmr_info), tb);
           }
 
@@ -1228,9 +1230,12 @@ script:
     then:
       - rtttl.play: !lambda |-
           switch (id(g_tone_idx)) {
-            case 0:  return "beeps:d=16,o=6,b=120:c,p,c,p,c";
-            case 1:  return "rise:d=8,o=5,b=140:c,e,g,c6,e6,g6";
-            default: return "chime:d=4,o=6,b=100:8e5,8g5,8c,8e,2c";
+            case 0:  // Flight of the Bumblebee
+              return "bumblebee:d=16,o=5,b=160:e6,d#6,d6,c#6,c6,b,a#,a,g#,g,f#,f,e,d#,d,c#,c,b4,a#4,a4,g#4,a4,a#4,b4,c,c#,d,d#,e,f,f#,g,g#,a,a#,b,c6,c#6,d6,d#6";
+            case 1:  // Eye of the Tiger
+              return "tiger:d=8,o=5,b=109:c,c,d#,c,p,c,d#,c,p,c,d#,c,a#4,p,c,c,d#,c,p,c,d#,c,p,c,d#,f,d#,c";
+            default: // Für Elise
+              return "elise:d=8,o=5,b=125:e6,d#6,e6,d#6,e6,b,d6,c6,a,p,c,e,a,b,p,e,g#,b,c6,p,e,e6,d#6,e6,d#6,e6,b,d6,c6,a,p,c,e,a,b,p,e,c6,b,a";
           }
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:

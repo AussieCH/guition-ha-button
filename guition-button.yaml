@@ -76,12 +76,37 @@ interval:
   - interval: 1s
     then:
       - lambda: |-
-          bool fired = false;
-          for (int i = 0; i < 4; i++) {
-            if (id(g_tmr)[i] > 0) { id(g_tmr)[i]--; if (id(g_tmr)[i] == 0) fired = true; }
+          bool was_alarm = id(g_alarm);
+          for (int i = 0; i < 3; i++) {
+            if (id(g_tmr)[i] > 0) {
+              id(g_tmr)[i]--;
+              if (id(g_tmr)[i] == 0) { id(g_alarm) = true; id(g_alarm_color) = i; }
+            }
           }
-          if (fired) { id(play_tone).execute(); if (id(g_disp_off)) id(wake_display).execute(); }
+          if (id(g_alarm) && !was_alarm) {            // Übergang in Alarm: Ton + Display wecken
+            id(play_tone).execute();
+            if (id(g_disp_off)) id(wake_display).execute();
+          }
           if (id(g_tile) == 8) id(render).execute();
+  # Ring-Blinken während eines Timer-Alarms (Farbe = Slot: 0 rot, 1 grün, 2 blau)
+  - interval: 0.4s
+    then:
+      - if:
+          condition: { lambda: 'return id(g_alarm);' }
+          then:
+            - lambda: 'id(g_blink_on) = !id(g_blink_on);'
+            - if:
+                condition: { lambda: 'return id(g_blink_on);' }
+                then:
+                  - light.turn_on:
+                      id: ring_light
+                      transition_length: 0s
+                      brightness: 100%
+                      red:   !lambda 'return id(g_alarm_color) == 0 ? 1.0 : 0.0;'
+                      green: !lambda 'return id(g_alarm_color) == 1 ? 1.0 : 0.0;'
+                      blue:  !lambda 'return id(g_alarm_color) == 2 ? 1.0 : 0.0;'
+                else:
+                  - light.turn_off: { id: ring_light, transition_length: 0s }
 
 api:
   encryption:
@@ -163,6 +188,13 @@ switch:
 
 rtttl:
   speaker: spk
+  on_finished_playback:
+    # Solange ein Timer-Alarm aktiv ist, Tonfolge wiederholen (mit kurzer Pause)
+    - delay: 400ms
+    - if:
+        condition: { lambda: 'return id(g_alarm);' }
+        then:
+          - script.execute: play_tone
 
 touchscreen:
   platform: cst816
@@ -184,6 +216,8 @@ touchscreen:
   on_release:
     - lambda: |-
         id(idle_timer).execute();
+        // Klingelt ein Timer-Alarm? Jede Berührung quittiert ihn (sonst keine Aktion)
+        if (id(g_alarm)) { id(g_was_off) = false; id(dismiss_alarm).execute(); return; }
         // War das Display aus, war diese Berührung nur zum Wecken -> keine Aktion
         if (id(g_was_off)) { id(g_was_off) = false; return; }
         int dx = id(g_xl) - id(g_x0);
@@ -270,10 +304,13 @@ globals:
   # Timer
   - { id: g_timer_set, type: int, restore_value: no, initial_value: '5' }      # eingestellte Minuten (0..180)
   - { id: g_tone_idx,  type: int, restore_value: yes, initial_value: '0' }     # 0..2 gewählte Tonfolge
+  - { id: g_alarm,       type: bool, restore_value: no, initial_value: 'false' }  # Timer abgelaufen, klingelt
+  - { id: g_alarm_color, type: int,  restore_value: no, initial_value: '0' }     # 0=rot 1=grün 2=blau (Slot)
+  - { id: g_blink_on,    type: bool, restore_value: no, initial_value: 'false' }  # Blink-Toggle
   - id: g_tmr
-    type: int[4]
+    type: int[3]
     restore_value: no
-    initial_value: '{0, 0, 0, 0}'    # Restsekunden je Timer-Slot (0 = frei)
+    initial_value: '{0, 0, 0}'       # Restsekunden je Timer-Slot (0 = frei); Slot 0=rot 1=grün 2=blau
 
 ###############################################################################
 # HA-STATE  ->  GLOBALS  (jede Änderung rendert neu)
@@ -973,7 +1010,7 @@ script:
             lv_label_set_text(id(w_val), buf);
             // laufende Timer zählen + frühesten Rest finden
             int cnt = 0, soon = 999999;
-            for (int i = 0; i < 4; i++) if (id(g_tmr)[i] > 0) { cnt++; if (id(g_tmr)[i] < soon) soon = id(g_tmr)[i]; }
+            for (int i = 0; i < 3; i++) if (id(g_tmr)[i] > 0) { cnt++; if (id(g_tmr)[i] < soon) soon = id(g_tmr)[i]; }
             char tb[48];
             if (cnt > 0) snprintf(tb, sizeof(tb), "%d aktiv  %d:%02d   Ton %d", cnt, soon / 60, soon % 60, id(g_tone_idx) + 1);
             else         snprintf(tb, sizeof(tb), "Ton %d", id(g_tone_idx) + 1);
@@ -1167,15 +1204,21 @@ script:
     then:
       - lambda: |-
           if (id(g_timer_set) <= 0) return;
-          for (int i = 0; i < 4; i++) {
+          for (int i = 0; i < 3; i++) {
             if (id(g_tmr)[i] == 0) { id(g_tmr)[i] = id(g_timer_set) * 60; break; }
           }
       - script.execute: render
-  - id: cancel_all            # alle Timer abbrechen + evtl. Ton stoppen
+  - id: cancel_all            # alle Timer abbrechen + Alarm/Ton/Ring stoppen
     then:
-      - lambda: 'for (int i = 0; i < 4; i++) id(g_tmr)[i] = 0;'
+      - lambda: 'for (int i = 0; i < 3; i++) id(g_tmr)[i] = 0; id(g_alarm) = false;'
       - rtttl.stop:
+      - light.turn_off: ring_light
       - script.execute: render
+  - id: dismiss_alarm         # Alarm quittieren (Tippen aufs Display): Ton + Blinken aus
+    then:
+      - lambda: 'id(g_alarm) = false;'
+      - rtttl.stop:
+      - light.turn_off: ring_light
   - id: tone_cycle            # Tonfolge weiterschalten + Vorschau abspielen
     then:
       - lambda: 'id(g_tone_idx) = (id(g_tone_idx) + 1) % 3;'

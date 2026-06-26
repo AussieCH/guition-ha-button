@@ -308,7 +308,7 @@ globals:
   - { id: g_tv_state, type: int, restore_value: no, initial_value: '0' }  # media_player: 0=Aus 1=Läuft 2=Pause/wach
   - { id: g_charging, type: bool,  restore_value: no, initial_value: 'false' }  # Akku lädt (Heuristik)
   - { id: g_bat_prev, type: float, restore_value: no, initial_value: '0' }      # letzte Akku-Spannung (Trend)
-  - { id: g_bright,   type: int,   restore_value: yes, initial_value: '100' }   # Display-Helligkeit % (10..100), bleibt erhalten
+  - { id: g_bright,   type: float, restore_value: yes, initial_value: '100' }   # Display-Helligkeit % (10..100), 48 Klicks = voller Bereich
   # Display-Sleep
   - { id: g_disp_off, type: bool, restore_value: no, initial_value: 'false' }  # Backlight aus (idle)
   - { id: g_was_off,  type: bool, restore_value: no, initial_value: 'false' }  # diese Berührung war nur Wecken
@@ -1107,7 +1107,7 @@ script:
             float freeKB = id(sys_free).has_state() ? id(sys_free).state / 1024.0f : 0.0f;
             float loopms = id(sys_loop).has_state() ? id(sys_loop).state : 0.0f;
             char sb[128];
-            snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\n%d %%  (%.2f V)\nHelligkeit: %d %%", freeKB, loopms, bpct, v, id(g_bright));
+            snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\n%d %%  (%.2f V)\nHelligkeit: %d %%", freeKB, loopms, bpct, v, (int)(id(g_bright) + 0.5f));
             lv_label_set_text(id(w_sys), sb);
           } else {                                   // Timer (8)
             lv_label_set_text(id(w_icon), "\U000F13AB");   // mdi:timer
@@ -1219,8 +1219,9 @@ script:
           } else if (t == 6) {                       // Apple TV: Lautstärke
             if (step > 0) id(act_tv_volup).execute();
             else          id(act_tv_voldn).execute();
-          } else if (t == 7) {                       // System: Display-Helligkeit 10..100 %
-            int v = id(g_bright) + step * 5; if (v < 10) v = 10; if (v > 100) v = 100;
+          } else if (t == 7) {                       // System: Display-Helligkeit, 48 Klicks für 10..100 %
+            float v = id(g_bright) + step * 1.875f;   // 90 % / 48 Klicks (= 1,5 Umdrehungen)
+            if (v < 10.0f) v = 10.0f; if (v > 100.0f) v = 100.0f;
             id(g_bright) = v;
             id(apply_bright).execute();
           } else {                                   // Timer (8)

@@ -38,6 +38,7 @@ esphome:
     priority: -100
     then:
       - lambda: 'id(render).execute();'
+      - light.turn_on: { id: backlight_light, brightness: !lambda 'return id(g_bright) / 100.0f;' }
       - script.execute: idle_timer
 
 esp32:
@@ -307,6 +308,7 @@ globals:
   - { id: g_tv_state, type: int, restore_value: no, initial_value: '0' }  # media_player: 0=Aus 1=Läuft 2=Pause/wach
   - { id: g_charging, type: bool,  restore_value: no, initial_value: 'false' }  # Akku lädt (Heuristik)
   - { id: g_bat_prev, type: float, restore_value: no, initial_value: '0' }      # letzte Akku-Spannung (Trend)
+  - { id: g_bright,   type: int,   restore_value: yes, initial_value: '100' }   # Display-Helligkeit % (10..100), bleibt erhalten
   # Display-Sleep
   - { id: g_disp_off, type: bool, restore_value: no, initial_value: 'false' }  # Backlight aus (idle)
   - { id: g_was_off,  type: bool, restore_value: no, initial_value: 'false' }  # diese Berührung war nur Wecken
@@ -720,9 +722,9 @@ lvgl:
         - label:
             id: w_sys
             align: CENTER
-            y: 10
+            y: 16
             text_align: CENTER
-            text_font: font_sys
+            text_font: font_dots
             text_color: 0xFFFFFF
             hidden: true
             text: ""
@@ -1104,8 +1106,8 @@ script:
             lv_arc_set_value(id(w_arc), bpct);
             float freeKB = id(sys_free).has_state() ? id(sys_free).state / 1024.0f : 0.0f;
             float loopms = id(sys_loop).has_state() ? id(sys_loop).state : 0.0f;
-            char sb[112];
-            snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\n%d %%  (%.2f V)", freeKB, loopms, bpct, v);
+            char sb[128];
+            snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\n%d %%  (%.2f V)\nHelligkeit: %d %%", freeKB, loopms, bpct, v, id(g_bright));
             lv_label_set_text(id(w_sys), sb);
           } else {                                   // Timer (8)
             lv_label_set_text(id(w_icon), "\U000F13AB");   // mdi:timer
@@ -1217,8 +1219,10 @@ script:
           } else if (t == 6) {                       // Apple TV: Lautstärke
             if (step > 0) id(act_tv_volup).execute();
             else          id(act_tv_voldn).execute();
-          } else if (t == 7) {                       // System-Info: Knob ohne Funktion
-            // nichts
+          } else if (t == 7) {                       // System: Display-Helligkeit 10..100 %
+            int v = id(g_bright) + step * 5; if (v < 10) v = 10; if (v > 100) v = 100;
+            id(g_bright) = v;
+            id(apply_bright).execute();
           } else {                                   // Timer (8)
             int n = 0; for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) n++;
             bool addmode = id(g_add_mode) || (n == 0);
@@ -1342,11 +1346,14 @@ script:
       - delay: 60s
       - lambda: 'id(g_disp_off) = true;'
       - light.turn_off: backlight_light
-  - id: wake_display          # Backlight an + Timer neu starten
+  - id: wake_display          # Backlight an (gespeicherte Helligkeit) + Timer neu starten
     then:
       - lambda: 'id(g_disp_off) = false;'
-      - light.turn_on: backlight_light
+      - light.turn_on: { id: backlight_light, brightness: !lambda 'return id(g_bright) / 100.0f;' }
       - script.execute: idle_timer
+  - id: apply_bright          # eingestellte Display-Helligkeit anwenden
+    then:
+      - light.turn_on: { id: backlight_light, brightness: !lambda 'return id(g_bright) / 100.0f;' }
 
   # --- Timer ---
   - id: start_timer           # neuen Timer mit g_timer_set Minuten in freiem Slot starten

@@ -7,30 +7,38 @@ Lautsprecher; LED-Ring als Statusanzeige.
 
 Alles läuft über die **ESPHome-API direkt mit Home Assistant** – kein Cloud-Dienst.
 
-## Kacheln (9)
+## Kacheln (11)
 
-Horizontal wischen wechselt die Kachel (Punkte unten = aktive Kachel).
+Horizontal wischen wechselt die Kachel (Punkte unten = aktive Kachel). Nach dem Boot
+ist die **Uhr** aktiv (Position 0).
 
 | # | Kachel | Knob drehen | Tippen | Mittel-Button |
 |---|--------|-------------|--------|---------------|
-| 0 | **Ventilator** | Stufe 0–6 (≈4 Klicks/Stufe) | – | ↺ Drehrichtung umkehren |
-| 1 | **Storen TV** | – | – | ▲ Öffnen / ▼ Schließen (2 Buttons) |
-| 2 | **Licht (alle)** | alle heller/dunkler (relativ) | alle an/aus | – |
-| 3 | **Gradient** | Helligkeit ±5 % | an/aus | 🎨 Farbmenü |
-| 4 | **Lightstrip** | Helligkeit ±5 % | an/aus | 🎨 Farbmenü |
-| 5 | **Stehlampe** | Helligkeit ±5 % | an/aus | 🎨 Farbmenü |
-| 6 | **Apple TV** | Lautstärke ± | – | ▶❚❚ Play/Pause · ⏻ Power |
-| 7 | **System** | – | – | – |
-| 8 | **Timer** | Zeit / durch Timer scrollen | – | ＋ hinzufügen · ♪ Ton |
+| 0 | **Uhr / Home** | – | – | – |
+| 1 | **Timer** | Zeit / durch Timer scrollen | – | ＋ hinzufügen · ♪ Ton |
+| 2 | **Apple TV** | Lautstärke ± | – | ▶❚❚ Play/Pause · ⏻ Power |
+| 3 | **Ventilator** | Stufe 0–6 (≈4 Klicks/Stufe) | – | ↺ Drehrichtung umkehren |
+| 4 | **Storen TV** | – | – | ▲ Öffnen / ▼ Schließen |
+| 5 | **Licht (alle)** | Master-Helligkeit (1,5 Umdr.) | alle an/aus | – |
+| 6 | **Gradient** | Helligkeit ±5 % | an/aus | 🎨 Farbmenü |
+| 7 | **Lightstrip** | Helligkeit ±5 % | an/aus | 🎨 Farbmenü |
+| 8 | **Stehlampe** | Helligkeit ±5 % | an/aus | 🎨 Farbmenü |
+| 9 | **System** | Display-Helligkeit | – | – |
+| 10 | **Flugradar** | Radius 10–50 km | Flieger → Details | – |
 
 ### Gesten
 
 - **Horizontal wischen** → Kachel wechseln
 - **Nach unten wischen** (auf einer Licht-Kachel) → Farbmenü
 - **Nach oben wischen** (überall) → Liste der aktiven Timer
-- In den Untermenüs (Farbe / Timer-Liste): **wischen** = zurück
+- In den Untermenüs (Farbe / Timer-Liste / Flug-Details): **wischen/tippen** = zurück
 
 ## Die Kacheln im Detail
+
+### Uhr / Home (Startseite)
+Wochentag + Datum, große Uhrzeit (HA-Zeit) und zwei Temperaturen:
+**Balkon** (`sensor.wohnzimmer_garten_im_schatten_2m_temperatur`) und
+**Wohnzimmer** (`sensor.wohnzimmer_temperatur`).
 
 ### Ventilator (RF über HA-Scripts)
 Kein `fan`-Entity – der Lüfter wird per Funk über HA-Scripts geschaltet, die Ist-Stufe
@@ -54,8 +62,8 @@ Lampen: `light.gradient_lightstrip_wohnzimmer`, `light.lightstrip_wohnzimmer`,
 - **Einzelkacheln**: Tippen = an/aus, Knob = Helligkeit ±5 %.
 - **Farbmenü** (runter wischen *oder* Paletten-Button): Knob dreht den **Farbton** (Hue),
   der Strip ändert die Farbe live (`rgb_color`). Hoch wischen = zurück.
-- **Licht (alle)**: Master-Dimmer – Knob macht alle eingeschalteten Lampen **relativ**
-  heller/dunkler (jede ab ihrem eigenen Wert), Tippen schaltet alle an/aus.
+- **Licht (alle)**: absoluter Master-Dimmer – Knob setzt alle Lampen smooth auf denselben
+  Wert (analog zur System-Helligkeit, ~1,5 Umdrehungen), Tippen schaltet alle an/aus.
 
 Helligkeit/Status werden live aus HA gelesen.
 
@@ -68,8 +76,10 @@ Helligkeit/Status werden live aus HA gelesen.
   `idle` gemeldet.
 
 ### System
-Diagnose: freier Heap, Loop-Zeit (Last-Indikator) und **Akku** (ADC auf GPIO6, grobe
-%-Schätzung – Kurve ggf. pro Gerät kalibrieren).
+Diagnose: freier Heap, Loop-Zeit (Last-Indikator), **Akku** (ADC auf GPIO6, grobe
+%-Schätzung; Lade-Erkennung heuristisch über die Spannung → Akku-Icon wird zum
+Lade-Icon) und **Display-Helligkeit** (10–100 %, per Knob über 1,5 Umdrehungen, bleibt
+über Kacheln/Sleep/Reboot erhalten).
 
 ### Timer (bis zu 5 parallel)
 - **Zeit einstellen**: Paletten-Button **＋** tippen → Add-Modus, Knob stellt 0–180 min,
@@ -83,6 +93,16 @@ Diagnose: freier Heap, Loop-Zeit (Last-Indikator) und **Akku** (ADC auf GPIO6, g
 - **Farben**: jeder der 5 Timer hat eine eigene Farbe (rot · orange · gelb · grün · blau).
   Die Farbe färbt **Uhr-Icon, Display-Ring und LED-Ring-Blinken** des jeweiligen Timers.
 - **Übersicht/Abbruch**: nach oben wischen → Liste aller aktiven Timer, je mit ✕.
+
+### Flugradar (OpenSky)
+Radar-Ansicht der Flugzeuge im Umkreis (Live-Daten von [OpenSky](https://opensky-network.org/)):
+- Zuhause im Zentrum, Entfernungsringe, Norden oben; Flugzeug-Symbole **in Flugrichtung
+  gedreht** mit Callsign.
+- **Knob** = Radius **10–50 km**; **Tippen** auf einen Flieger → Details (Höhe, Speed,
+  Kurs, Distanz), Tippen schließt wieder.
+- Auth via **OAuth2** (`client_credentials`); Abruf alle **5 s**, aber nur wenn die
+  Radar-Kachel aktiv **und** das Display wach ist (schont das OpenSky-Kontingent).
+- Keine echten Kartenkacheln (auf dem ESP nicht praktikabel) – bewusst ein Radar-View.
 
 ### Display-Sleep
 Nach **60 s ohne Bedienung** geht das Backlight aus; Touch oder Knob weckt wieder auf
@@ -99,14 +119,18 @@ Nach **60 s ohne Bedienung** geht das Backlight aus; Touch oder Knob weckt wiede
 
 ## Einrichten
 
-1. **Entity-IDs** in [`guition-button.yaml`](guition-button.yaml) unter `substitutions:`
-   anpassen (Lüfter-Scripts, Storen, 3 Hue-Lampen, Apple-TV-Entities).
+1. **Entity-IDs / Werte** in [`guition-button.yaml`](guition-button.yaml) unter
+   `substitutions:` anpassen (Lüfter-Scripts, Storen, 3 Hue-Lampen, Apple-TV-Entities,
+   Temperatur-Sensoren, Home-Koordinaten fürs Flugradar).
 2. **Secrets anlegen:**
    ```bash
    cp secrets.yaml.example secrets.yaml
    openssl rand -base64 32   # taugt als api_key
    # WLAN + api_key + ota_password eintragen
    ```
+   Fürs **Flugradar** zusätzlich `opensky_auth` (Basic) oder ein OAuth2-Token-Body
+   (`opensky_oauth_body`, `client_credentials`) aus einem kostenlosen
+   [OpenSky](https://opensky-network.org/)-Account.
 3. **Erster Flash MUSS über USB** (die 16-MB-Partitionstabelle lässt sich nicht per OTA
    einspielen):
    ```bash

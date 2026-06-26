@@ -263,9 +263,9 @@ touchscreen:
           if (abs(dy) > 50 && abs(dy) > abs(dx)) id(exit_timers).execute();
           return;
         }
-        // Flug-Detail-Overlay: nach oben wischen schließt
+        // Flug-Detail-Overlay: jede Berührung (Tippen/Wischen) schließt
         if (id(g_submode) == 3) {
-          if (abs(dy) > 50 && abs(dy) > abs(dx)) id(close_details).execute();
+          id(close_details).execute();
           return;
         }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
@@ -1086,7 +1086,7 @@ lvgl:
             widgets:
               - label: { id: w_det_cs, align: TOP_MID, y: 14, text_font: font_name, text_color: 0x66DDFF, text: "" }
               - label: { id: w_det_info, align: TOP_LEFT, x: 26, y: 58, text_align: LEFT, text_font: font_sys, text_color: 0xFFFFFF, text: "" }
-              - label: { align: BOTTOM_MID, y: -10, text_font: font_small, text_color: 0x888888, text: "hoch wischen = zu" }
+              - label: { align: BOTTOM_MID, y: -10, text_font: font_small, text_color: 0x888888, text: "tippen = schließen" }
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step

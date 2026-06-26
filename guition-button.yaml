@@ -306,6 +306,11 @@ touchscreen:
           if (abs(dy) > 50 && abs(dy) > abs(dx)) id(exit_timers).execute();
           return;
         }
+        // Flug-Detail-Overlay: nach oben wischen schließt
+        if (id(g_submode) == 3) {
+          if (abs(dy) > 50 && abs(dy) > abs(dx)) id(close_details).execute();
+          return;
+        }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
           // Horizontal wischen -> Kachel wechseln (9 Kacheln)
           if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 10;
@@ -316,11 +321,15 @@ touchscreen:
           if (dy < 0) id(enter_timers).execute();
           else if (t >= 3 && t <= 5) id(enter_color).execute();
         } else if (abs(dx) < 25 && abs(dy) < 25) {
-          // Tippen -> schalten, ABER nicht wenn auf dem Aktions-Button
-          // (der hat seinen eigenen on_click). Button-Mitte ~ (180, 260), 64px.
-          bool btn_shown = (t == 0 || (t >= 3 && t <= 5));
-          bool on_btn = btn_shown && abs(id(g_xl) - 180) <= 40 && abs(id(g_yl) - 260) <= 40;
-          if (!on_btn) id(tap_action).execute();
+          // Tippen
+          if (t == 9) {
+            id(radar_tap).execute();               // Flugradar: Flieger wählen -> Details
+          } else {
+            // ABER nicht wenn auf dem Aktions-Button (eigener on_click). Mitte ~ (180, 260).
+            bool btn_shown = (t == 0 || (t >= 3 && t <= 5));
+            bool on_btn = btn_shown && abs(id(g_xl) - 180) <= 40 && abs(id(g_yl) - 260) <= 40;
+            if (!on_btn) id(tap_action).execute();
+          }
         }
 
 # Knob: KEIN Quadratur-Encoder. Richtung = welcher Pin pulst.
@@ -1105,6 +1114,22 @@ lvgl:
         - label: { id: w_pc8, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
         - image: { id: w_pl9, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc9, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        # Detail-Overlay (Tippen auf einen Flieger)
+        - obj:
+            id: w_det_panel
+            align: CENTER
+            width: 264
+            height: 196
+            radius: 18
+            bg_color: 0x0C141C
+            border_width: 2
+            border_color: 0x3DA9FC
+            scrollable: false
+            hidden: true
+            widgets:
+              - label: { id: w_det_cs, align: TOP_MID, y: 14, text_font: font_name, text_color: 0x66DDFF, text: "" }
+              - label: { id: w_det_info, align: TOP_LEFT, x: 26, y: 58, text_align: LEFT, text_font: font_sys, text_color: 0xFFFFFF, text: "" }
+              - label: { align: BOTTOM_MID, y: -10, text_font: font_small, text_color: 0x888888, text: "hoch wischen = zu" }
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step
@@ -1304,6 +1329,7 @@ script:
             id(render_color).execute();
             return;
           }
+          if (id(g_submode) == 3) return;            // Flug-Detail offen: Knob ohne Funktion
           if (id(g_submode) == 2) {                  // Timer-Liste: Auswahl durch laufende Timer scrollen
             int act[5], n = 0;
             for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) act[n++] = i;
@@ -1621,15 +1647,22 @@ script:
             lv_label_set_text(txt[shown], a.cs.empty() ? "?" : a.cs.c_str());
             lv_obj_clear_flag(ico[shown], LV_OBJ_FLAG_HIDDEN);
             lv_obj_clear_flag(txt[shown], LV_OBJ_FLAG_HIDDEN);
+            g_shown_x[shown] = sx; g_shown_y[shown] = sy; g_shown_pi[shown] = (int) k;  // für Tipp-Trefferprüfung
             shown++;
           }
           for (int i = shown; i < 10; i++) {
             lv_obj_add_flag(ico[i], LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(txt[i], LV_OBJ_FLAG_HIDDEN);
           }
+          g_shown_n = shown;
           char st[48];
           snprintf(st, sizeof(st), "Flugradar   %.0f km   %d Flug%s", r, shown, shown == 1 ? "" : "e");
           lv_label_set_text(id(w_radar_status), st);
+          // offenes Detail-Overlay live nachführen (Flug per Callsign wiederfinden)
+          if (id(g_submode) == 3 && !g_sel_cs.empty()) {
+            for (auto &p : g_planes) if (p.cs == g_sel_cs) { g_sel_ac = p; break; }
+            id(render_details).execute();
+          }
   - id: nav_update            # je nach aktiver Kachel die richtige Seite zeigen
     then:
       - if:
@@ -1640,6 +1673,41 @@ script:
           else:
             - lvgl.page.show: page_main
             - script.execute: render
+  - id: radar_tap             # Tippen aufs Radar: nächsten Marker wählen -> Details
+    then:
+      - lambda: |-
+          int tx = id(g_xl) - 180, ty = id(g_yl) - 180;
+          int best = -1, bestd = 28 * 28;            // Trefferradius ~28 px
+          for (int i = 0; i < g_shown_n; i++) {
+            int ddx = tx - g_shown_x[i], ddy = ty - g_shown_y[i];
+            int d2 = ddx * ddx + ddy * ddy;
+            if (d2 < bestd) { bestd = d2; best = i; }
+          }
+          if (best >= 0) {
+            int pi = g_shown_pi[best];
+            if (pi >= 0 && pi < (int) g_planes.size()) {
+              g_sel_ac = g_planes[pi];
+              g_sel_cs = g_sel_ac.cs;
+              id(g_submode) = 3;
+              id(render_details).execute();
+            }
+          }
+  - id: render_details        # Detail-Overlay füllen + zeigen
+    then:
+      - lambda: |-
+          Aircraft &a = g_sel_ac;
+          lv_label_set_text(id(w_det_cs), a.cs.empty() ? "?" : a.cs.c_str());
+          char b[160];
+          snprintf(b, sizeof(b), "Höhe: %.0f m\nSpeed: %.0f km/h\nKurs: %.0f°\nDistanz: %.1f km",
+                   a.alt, a.vel * 3.6f, a.trk, a.dist);
+          lv_label_set_text(id(w_det_info), b);
+          lv_obj_clear_flag(id(w_det_panel), LV_OBJ_FLAG_HIDDEN);
+  - id: close_details         # Detail-Overlay schließen
+    then:
+      - lambda: |-
+          id(g_submode) = 0;
+          g_sel_cs = "";
+          lv_obj_add_flag(id(w_det_panel), LV_OBJ_FLAG_HIDDEN);
 
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:

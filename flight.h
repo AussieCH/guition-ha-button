@@ -17,3 +17,13 @@ struct Aircraft {
 
 // Globale Flugzeug-Liste (direkt im Header, damit sie vor den ESPHome-Globals existiert)
 inline std::vector<Aircraft> g_planes;
+
+// Bildschirm-Positionen der angezeigten Marker (für Tipp-Trefferprüfung)
+inline int g_shown_n = 0;
+inline int16_t g_shown_x[10];   // Offset von der Mitte (px)
+inline int16_t g_shown_y[10];
+inline int g_shown_pi[10];      // Index in g_planes
+
+// Ausgewähltes Flugzeug (Detail-Overlay)
+inline Aircraft g_sel_ac;
+inline std::string g_sel_cs;    // Callsign zum Wiederfinden nach jedem Abruf

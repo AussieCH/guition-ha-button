@@ -37,6 +37,8 @@ esphome:
   on_boot:
     priority: -100
     then:
+      # Helligkeit absichern (fängt ungültige/alte gespeicherte Werte ab, sonst dunkel)
+      - lambda: 'if (!(id(g_bright) >= 10.0f && id(g_bright) <= 100.0f)) id(g_bright) = 100.0f;'
       - lambda: 'id(render).execute();'
       - light.turn_on: { id: backlight_light, brightness: !lambda 'return id(g_bright) / 100.0f;' }
       - script.execute: idle_timer

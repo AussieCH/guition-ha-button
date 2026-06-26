@@ -27,3 +27,8 @@ inline int g_shown_pi[10];      // Index in g_planes
 // Ausgewähltes Flugzeug (Detail-Overlay)
 inline Aircraft g_sel_ac;
 inline std::string g_sel_cs;    // Callsign zum Wiederfinden nach jedem Abruf
+
+// OpenSky OAuth2 (Bearer)
+inline std::string g_token;
+inline std::string g_authhdr;     // "Bearer <token>" (persistent für den Header-Lambda)
+inline uint32_t g_token_exp = 0;  // millis, ab wann der Token erneuert werden muss

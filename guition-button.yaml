@@ -97,7 +97,7 @@ interval:
       - if:
           condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 9;' }
           then:
-            - script.execute: fetch_planes
+            - script.execute: radar_fetch
   # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen
   - interval: 1s
     then:
@@ -1580,6 +1580,35 @@ script:
       - script.execute: render_timers
 
   # --- Flugradar ---
+  - id: get_token             # OAuth2-Token holen (client_credentials), danach Flüge abrufen
+    then:
+      - http_request.post:
+          url: "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
+          request_headers:
+            Content-Type: application/x-www-form-urlencoded
+          body: !secret opensky_oauth_body
+          capture_response: true
+          max_response_buffer_size: 4000
+          on_response:
+            - lambda: |-
+                if (response->status_code != 200) { ESP_LOGW("radar", "Token HTTP %d", response->status_code); return; }
+                json::parse_json(body, [](JsonObject root) -> bool {
+                  const char* t = root["access_token"];
+                  if (t) { g_token = t; g_authhdr = std::string("Bearer ") + g_token; }
+                  int exp = root["expires_in"].is<int>() ? root["expires_in"].as<int>() : 1800;
+                  g_token_exp = millis() + (uint32_t)(exp > 120 ? exp - 60 : exp) * 1000;
+                  return true;
+                });
+                ESP_LOGI("radar", "Token erneuert (len %d)", (int) g_token.size());
+            - script.execute: fetch_planes
+  - id: radar_fetch           # gültigen Token sicherstellen, dann Flüge holen
+    then:
+      - if:
+          condition: { lambda: 'return !g_token.empty() && millis() < g_token_exp;' }
+          then:
+            - script.execute: fetch_planes
+          else:
+            - script.execute: get_token
   - id: fetch_planes          # OpenSky-Flugzeuge im aktuellen Radius holen
     then:
       - http_request.get:
@@ -1594,7 +1623,7 @@ script:
               lat0 - dlat, lon0 - dlon, lat0 + dlat, lon0 + dlon);
             return std::string(u);
           request_headers:
-            Authorization: !secret opensky_auth
+            Authorization: !lambda 'return g_authhdr.c_str();'
           capture_response: true
           max_response_buffer_size: 40000
           on_response:
@@ -1676,7 +1705,7 @@ script:
           then:
             - lvgl.page.show: page_radar
             - script.execute: render_radar
-            - script.execute: fetch_planes
+            - script.execute: radar_fetch
           else:
             - lvgl.page.show: page_main
             - script.execute: render

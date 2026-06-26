@@ -91,58 +91,13 @@ interval:
           condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 7;' }
           then:
             - script.execute: render
-  # Flugradar: alle 15s OpenSky-Flugzeuge im Radius holen
-  - interval: 15s
+  # Flugradar: nur abrufen, wenn man auf der Radar-Kachel ist (schont OpenSky-Rate-Limit)
+  - interval: 30s
     then:
-      - http_request.get:
-          url: !lambda |-
-            float r = id(g_radius_km);
-            float lat0 = ${home_lat}, lon0 = ${home_lon};
-            float dlat = r / 111.0f;
-            float dlon = r / (111.0f * cosf(lat0 * 0.01745329f));
-            char u[220];
-            snprintf(u, sizeof(u),
-              "https://opensky-network.org/api/states/all?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f",
-              lat0 - dlat, lon0 - dlon, lat0 + dlat, lon0 + dlon);
-            return std::string(u);
-          request_headers:
-            Authorization: !secret opensky_auth
-          capture_response: true
-          max_response_buffer_size: 40000   # OpenSky-Antwort bei großem Radius (mehrere KB)
-          on_response:
-            - lambda: |-
-                if (response->status_code != 200) { ESP_LOGW("radar", "HTTP %d", response->status_code); return; }
-                bool ok = json::parse_json(body, [](JsonObject root) -> bool {
-                  JsonArray states = root["states"].as<JsonArray>();
-                  g_planes.clear();
-                  const float lat0 = ${home_lat}, lon0 = ${home_lon};
-                  const float cl = cosf(lat0 * 0.01745329f);
-                  for (JsonVariant v : states) {
-                    JsonArray s = v.as<JsonArray>();
-                    if (s.isNull()) continue;
-                    Aircraft a;
-                    const char* cs = s[1];
-                    a.cs = cs ? std::string(cs) : std::string("");
-                    while (!a.cs.empty() && a.cs.back() == ' ') a.cs.pop_back();
-                    if (!s[5].isNull()) a.lon = s[5].as<float>();
-                    if (!s[6].isNull()) a.lat = s[6].as<float>();
-                    if (!s[7].isNull()) a.alt = s[7].as<float>();
-                    a.gnd = s[8].as<bool>();
-                    if (!s[9].isNull())  a.vel = s[9].as<float>();
-                    if (!s[10].isNull()) a.trk = s[10].as<float>();
-                    if (a.lat == 0.0f && a.lon == 0.0f) continue;
-                    float dx = (a.lon - lon0) * 111.0f * cl;
-                    float dy = (a.lat - lat0) * 111.0f;
-                    a.dist = sqrtf(dx * dx + dy * dy);
-                    if (a.dist <= id(g_radius_km)) g_planes.push_back(a);
-                  }
-                  return true;
-                });
-                std::sort(g_planes.begin(), g_planes.end(),
-                          [](const Aircraft &a, const Aircraft &b) { return a.dist < b.dist; });
-                ESP_LOGI("radar", "%d Flugzeuge im Radius %.0f km (parse %s)",
-                         (int) g_planes.size(), id(g_radius_km), ok ? "ok" : "FAIL");
-                id(render_radar).execute();
+      - if:
+          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 9;' }
+          then:
+            - script.execute: fetch_planes
   # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen
   - interval: 1s
     then:
@@ -1625,6 +1580,57 @@ script:
       - script.execute: render_timers
 
   # --- Flugradar ---
+  - id: fetch_planes          # OpenSky-Flugzeuge im aktuellen Radius holen
+    then:
+      - http_request.get:
+          url: !lambda |-
+            float r = id(g_radius_km);
+            float lat0 = ${home_lat}, lon0 = ${home_lon};
+            float dlat = r / 111.0f;
+            float dlon = r / (111.0f * cosf(lat0 * 0.01745329f));
+            char u[220];
+            snprintf(u, sizeof(u),
+              "https://opensky-network.org/api/states/all?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f",
+              lat0 - dlat, lon0 - dlon, lat0 + dlat, lon0 + dlon);
+            return std::string(u);
+          request_headers:
+            Authorization: !secret opensky_auth
+          capture_response: true
+          max_response_buffer_size: 40000
+          on_response:
+            - lambda: |-
+                if (response->status_code != 200) { ESP_LOGW("radar", "HTTP %d", response->status_code); return; }
+                bool ok = json::parse_json(body, [](JsonObject root) -> bool {
+                  JsonArray states = root["states"].as<JsonArray>();
+                  g_planes.clear();
+                  const float lat0 = ${home_lat}, lon0 = ${home_lon};
+                  const float cl = cosf(lat0 * 0.01745329f);
+                  for (JsonVariant v : states) {
+                    JsonArray s = v.as<JsonArray>();
+                    if (s.isNull()) continue;
+                    Aircraft a;
+                    const char* cs = s[1];
+                    a.cs = cs ? std::string(cs) : std::string("");
+                    while (!a.cs.empty() && a.cs.back() == ' ') a.cs.pop_back();
+                    if (!s[5].isNull()) a.lon = s[5].as<float>();
+                    if (!s[6].isNull()) a.lat = s[6].as<float>();
+                    if (!s[7].isNull()) a.alt = s[7].as<float>();
+                    a.gnd = s[8].as<bool>();
+                    if (!s[9].isNull())  a.vel = s[9].as<float>();
+                    if (!s[10].isNull()) a.trk = s[10].as<float>();
+                    if (a.lat == 0.0f && a.lon == 0.0f) continue;
+                    float dx = (a.lon - lon0) * 111.0f * cl;
+                    float dy = (a.lat - lat0) * 111.0f;
+                    a.dist = sqrtf(dx * dx + dy * dy);
+                    if (a.dist <= id(g_radius_km)) g_planes.push_back(a);
+                  }
+                  return true;
+                });
+                std::sort(g_planes.begin(), g_planes.end(),
+                          [](const Aircraft &a, const Aircraft &b) { return a.dist < b.dist; });
+                ESP_LOGI("radar", "%d Flugzeuge im Radius %.0f km (parse %s)",
+                         (int) g_planes.size(), id(g_radius_km), ok ? "ok" : "FAIL");
+                id(render_radar).execute();
   - id: render_radar          # Flugzeuge auf das Radar projizieren
     then:
       - lambda: |-
@@ -1670,6 +1676,7 @@ script:
           then:
             - lvgl.page.show: page_radar
             - script.execute: render_radar
+            - script.execute: fetch_planes
           else:
             - lvgl.page.show: page_main
             - script.execute: render

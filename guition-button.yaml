@@ -33,10 +33,15 @@ substitutions:
   # Apple TV (Esszimmer)
   tv_media_entity: "media_player.wohnzimmer_2"
   tv_remote_entity: "remote.wohnzimmer"
+  # Flugradar (OpenSky) – Home-Koordinaten für Projektion/Bounding-Box
+  home_lat: "47.189425"
+  home_lon: "8.719065"
 
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
+  includes:
+    - flight.h
   on_boot:
     priority: -100
     then:
@@ -58,6 +63,8 @@ esp32:
       CONFIG_ESP32S3_DATA_CACHE_LINE_64B: "y"
       CONFIG_SPIRAM_FETCH_INSTRUCTIONS: y
       CONFIG_SPIRAM_RODATA: y
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE: y          # HTTPS (OpenSky) Root-CAs
+      CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL: y
 
 psram:
   mode: octal
@@ -70,6 +77,12 @@ logger:
 debug:
   update_interval: 5s
 
+# HTTPS-Client für OpenSky (Flugradar)
+http_request:
+  id: http_radar
+  useragent: wohnzimmer-knob
+  timeout: 10s
+
 # System-Kachel alle paar Sekunden neu zeichnen (Sensoren triggern kein Render)
 interval:
   - interval: 3s
@@ -78,6 +91,54 @@ interval:
           condition: { lambda: 'const int o[9] = ${tile_order}; return o[id(g_tile)] == 7;' }
           then:
             - script.execute: render
+  # Flugradar: alle 15s OpenSky-Flugzeuge im Radius holen
+  - interval: 15s
+    then:
+      - http_request.get:
+          url: !lambda |-
+            float r = id(g_radius_km);
+            float lat0 = ${home_lat}, lon0 = ${home_lon};
+            float dlat = r / 111.0f;
+            float dlon = r / (111.0f * cosf(lat0 * 0.01745329f));
+            char u[220];
+            snprintf(u, sizeof(u),
+              "https://opensky-network.org/api/states/all?lamin=%.4f&lomin=%.4f&lamax=%.4f&lomax=%.4f",
+              lat0 - dlat, lon0 - dlon, lat0 + dlat, lon0 + dlon);
+            return std::string(u);
+          request_headers:
+            Authorization: !secret opensky_auth
+          capture_response: true
+          on_response:
+            - lambda: |-
+                if (response->status_code != 200) { ESP_LOGW("radar", "HTTP %d", response->status_code); return; }
+                bool ok = json::parse_json(body, [](JsonObject root) -> bool {
+                  JsonArray states = root["states"].as<JsonArray>();
+                  g_planes.clear();
+                  const float lat0 = ${home_lat}, lon0 = ${home_lon};
+                  const float cl = cosf(lat0 * 0.01745329f);
+                  for (JsonVariant v : states) {
+                    JsonArray s = v.as<JsonArray>();
+                    if (s.isNull()) continue;
+                    Aircraft a;
+                    const char* cs = s[1];
+                    a.cs = cs ? std::string(cs) : std::string("");
+                    while (!a.cs.empty() && a.cs.back() == ' ') a.cs.pop_back();
+                    if (!s[5].isNull()) a.lon = s[5].as<float>();
+                    if (!s[6].isNull()) a.lat = s[6].as<float>();
+                    if (!s[7].isNull()) a.alt = s[7].as<float>();
+                    a.gnd = s[8].as<bool>();
+                    if (!s[9].isNull())  a.vel = s[9].as<float>();
+                    if (!s[10].isNull()) a.trk = s[10].as<float>();
+                    if (a.lat == 0.0f && a.lon == 0.0f) continue;
+                    float dx = (a.lon - lon0) * 111.0f * cl;
+                    float dy = (a.lat - lat0) * 111.0f;
+                    a.dist = sqrtf(dx * dx + dy * dy);
+                    if (a.dist <= id(g_radius_km)) g_planes.push_back(a);
+                  }
+                  return true;
+                });
+                ESP_LOGI("radar", "%d Flugzeuge im Radius %.0f km (parse %s)",
+                         (int) g_planes.size(), id(g_radius_km), ok ? "ok" : "FAIL");
   # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen
   - interval: 1s
     then:
@@ -303,6 +364,8 @@ globals:
     initial_value: '{0, 0, 0}'
   - { id: g_all_pct, type: float, restore_value: no, initial_value: '50' }  # absolute Master-Helligkeit "Licht alle" (10..100)
   - { id: g_light_lock, type: uint32_t, restore_value: no, initial_value: '0' }  # millis: bis dahin HA-Helligkeit ignorieren (Anti-Hinken)
+  # Flugradar (g_planes ist ein inline-Global in flight.h, kein ESPHome-Global)
+  - { id: g_radius_km, type: float, restore_value: no, initial_value: '10' }     # Radar-Radius 10..50 km
   - { id: g_color_idx, type: int, restore_value: no, initial_value: '0' }   # aktuelles Farb-Preset
   - { id: g_set_pct, type: int, restore_value: no, initial_value: '0' }     # Scratch: Helligkeit für act_light_bri
   - { id: g_ltarget, type: std::string, restore_value: no, initial_value: '""' }  # Ziel-Entity(s) der aktiven Licht-Kachel

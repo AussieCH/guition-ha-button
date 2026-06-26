@@ -24,7 +24,7 @@ substitutions:
   timer_min_per_click: "1"    # Minuten pro Knob-Klick auf der Timer-Kachel (0..180)
   # Carousel-Reihenfolge: Position -> Tile-Typ (0=Fan 1=Cover 2=LichtAlle 3=Gradient
   # 4=Lightstrip 5=Stehlampe 6=AppleTV 7=System 8=Timer). Hier: Timer, AppleTV, Rest.
-  tile_order: "{8, 6, 0, 1, 2, 3, 4, 5, 7, 9}"
+  tile_order: "{10, 8, 6, 0, 1, 2, 3, 4, 5, 7, 9}"
   cover_entity: "cover.store_wohnzimmer_sud"
   # Drei Hue-Leuchten im Wohnzimmer (+ Sammel-Kachel steuert alle gemeinsam)
   light1_entity: "light.gradient_lightstrip_wohnzimmer"
@@ -36,6 +36,9 @@ substitutions:
   # Flugradar (OpenSky) – Home-Koordinaten für Projektion/Bounding-Box
   home_lat: "47.189425"
   home_lon: "8.719065"
+  # Uhr-Kachel: Temperatur-Sensoren
+  temp_balcony_entity: "sensor.wohnzimmer_garten_im_schatten_2m_temperatur"
+  temp_living_entity: "sensor.wohnzimmer_temperatur"
 
 esphome:
   name: ${name}
@@ -90,14 +93,14 @@ interval:
   - interval: 3s
     then:
       - if:
-          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 7;' }
+          condition: { lambda: 'const int o[11] = ${tile_order}; return o[id(g_tile)] == 7;' }
           then:
             - script.execute: render
   # Flugradar: alle 5s abrufen – aber nur wenn Radar-Kachel aktiv UND Display wach
   - interval: 5s
     then:
       - if:
-          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 9 && !id(g_disp_off);' }
+          condition: { lambda: 'const int o[11] = ${tile_order}; return o[id(g_tile)] == 9 && !id(g_disp_off);' }
           then:
             - script.execute: radar_fetch
   # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen
@@ -116,7 +119,11 @@ interval:
             if (id(g_disp_off)) id(wake_display).execute();
           }
           if (id(g_submode) == 2) id(render_timers).execute();
-          else { const int o[10] = ${tile_order}; if (o[id(g_tile)] == 8) id(render).execute(); }
+          else {
+            const int o[11] = ${tile_order}; int ty = o[id(g_tile)];
+            if (ty == 8) id(render).execute();
+            else if (ty == 10) id(render_clock).execute();
+          }
   # Ring-Blinken während eines Timer-Alarms (Farbe = Slot: 0 rot, 1 grün, 2 blau)
   - interval: 0.4s
     then:
@@ -251,7 +258,7 @@ touchscreen:
         if (id(g_was_off)) { id(g_was_off) = false; return; }
         int dx = id(g_xl) - id(g_x0);
         int dy = id(g_yl) - id(g_y0);
-        const int order[10] = ${tile_order};
+        const int order[11] = ${tile_order};
           int t = order[id(g_tile)];
         // Im Farbmenü: jede vertikale Wischgeste = zurück; sonst nichts
         if (id(g_submode) == 1) {
@@ -270,8 +277,8 @@ touchscreen:
         }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
           // Horizontal wischen -> Kachel wechseln (9 Kacheln)
-          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 10;
-          else        id(g_tile) = (id(g_tile) + 9) % 10;
+          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 11;
+          else        id(g_tile) = (id(g_tile) + 10) % 11;
           id(nav_update).execute();
         } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
           // Vertikal wischen: hoch -> aktive Timer; runter auf Einzel-Lampe (3..5) -> Farbmenü
@@ -336,6 +343,9 @@ globals:
   - { id: g_light_lock, type: uint32_t, restore_value: no, initial_value: '0' }  # millis: bis dahin HA-Helligkeit ignorieren (Anti-Hinken)
   # Flugradar (g_planes ist ein inline-Global in flight.h, kein ESPHome-Global)
   - { id: g_radius_km, type: float, restore_value: no, initial_value: '10' }     # Radar-Radius 10..50 km
+  # Uhr-Kachel Temperaturen
+  - { id: g_temp_balcony, type: float, restore_value: no, initial_value: '-99' }
+  - { id: g_temp_living,  type: float, restore_value: no, initial_value: '-99' }
   - { id: g_color_idx, type: int, restore_value: no, initial_value: '0' }   # aktuelles Farb-Preset
   - { id: g_set_pct, type: int, restore_value: no, initial_value: '0' }     # Scratch: Helligkeit für act_light_bri
   - { id: g_ltarget, type: std::string, restore_value: no, initial_value: '""' }  # Ziel-Entity(s) der aktiven Licht-Kachel
@@ -408,6 +418,16 @@ sensor:
     on_value:
       - lambda: 'id(g_cover_pos) = isnan(x) ? 0 : (int) x; id(render).execute();'
   - platform: homeassistant
+    id: ha_temp_balcony
+    entity_id: ${temp_balcony_entity}
+    on_value:
+      - lambda: 'id(g_temp_balcony) = isnan(x) ? -99.0f : x; const int o[11] = ${tile_order}; if (o[id(g_tile)] == 10) id(render_clock).execute();'
+  - platform: homeassistant
+    id: ha_temp_living
+    entity_id: ${temp_living_entity}
+    on_value:
+      - lambda: 'id(g_temp_living) = isnan(x) ? -99.0f : x; const int o[11] = ${tile_order}; if (o[id(g_tile)] == 10) id(render_clock).execute();'
+  - platform: homeassistant
     id: ha_l1_bri
     entity_id: ${light1_entity}
     attribute: brightness          # 0..255
@@ -450,7 +470,7 @@ sensor:
             else if (x <= id(g_bat_prev) - 0.008f) id(g_charging) = false;
           }
           id(g_bat_prev) = x;
-          { const int o[10] = ${tile_order}; if (o[id(g_tile)] == 7) id(render).execute(); }
+          { const int o[11] = ${tile_order}; if (o[id(g_tile)] == 7) id(render).execute(); }
 
 ###############################################################################
 # DISPLAY  (ST77916 QSPI, 360x360, RGB565, Farben invertiert)
@@ -722,6 +742,10 @@ font:
     size: 14
     glyphsets: [GF_Latin_Core]
     ignore_missing_glyphs: true
+  - file: "gfonts://Roboto"
+    id: font_clock
+    size: 78
+    glyphs: ["0","1","2","3","4","5","6","7","8","9",":"]
 
 image:
   - file: assets/airplane.png      # zeigt nach Norden; wird je Kurs rotiert
@@ -930,7 +954,7 @@ lvgl:
             y: 148
             text_font: font_dots
             text_color: 0x888888
-            text: "•·········"
+            text: "•··········"
     # Farbmenü-Seite (Swipe runter auf Licht-Kacheln öffnet sie, Swipe hoch zurück)
     - id: page_color
       bg_color: 0x000000
@@ -1087,6 +1111,13 @@ lvgl:
               - label: { id: w_det_cs, align: TOP_MID, y: 14, text_font: font_name, text_color: 0x66DDFF, text: "" }
               - label: { id: w_det_info, align: TOP_LEFT, x: 26, y: 58, text_align: LEFT, text_font: font_sys, text_color: 0xFFFFFF, text: "" }
               - label: { align: BOTTOM_MID, y: -10, text_font: font_small, text_color: 0x888888, text: "tippen = schließen" }
+    # Uhr-/Home-Seite (Position 0)
+    - id: page_clock
+      bg_color: 0x000000
+      widgets:
+        - label: { id: w_clk_date, align: CENTER, y: -80, text_font: font_name, text_color: 0xFFFFFF, text: "" }
+        - label: { id: w_clk_time, align: CENTER, y: -14, text_font: font_clock, text_color: 0x3DA9FC, text: "--:--" }
+        - label: { id: w_clk_temps, align: CENTER, y: 76, text_align: CENTER, text_font: font_sys, text_color: 0xCCCCCC, text: "" }
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step
@@ -1096,12 +1127,12 @@ script:
   - id: render
     then:
       - lambda: |-
-          const int order[10] = ${tile_order};
+          const int order[11] = ${tile_order};
           int pos = id(g_tile);                      // Carousel-Position
           int t = order[pos];                        // Tile-Typ an dieser Position
           // Punkt-Indikator (9 Kacheln): • = aktuelle Position
           std::string d;
-          for (int i = 0; i < 10; i++) d += (i == pos) ? "•" : "·";
+          for (int i = 0; i < 11; i++) d += (i == pos) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
           // Arc-Farbe standardmäßig blau, Icon weiß (Timer-Kachel überschreibt beides je Timer-Farbe)
           lv_obj_set_style_arc_color(id(w_arc), lv_color_hex(0x3DA9FC), LV_PART_INDICATOR);
@@ -1253,7 +1284,7 @@ script:
   - id: tap_action
     then:
       - lambda: |-
-          const int order[10] = ${tile_order};
+          const int order[11] = ${tile_order};
           int t = order[id(g_tile)];
           if (t == 0) {
             // Ventilator: Tippen ohne Funktion (Stufe = Dial, Umkehren = Button)
@@ -1274,7 +1305,7 @@ script:
     parameters: { delta: int }
     then:
       - lambda: |-
-          const int order[10] = ${tile_order};
+          const int order[11] = ${tile_order};
           int t = order[id(g_tile)];
           int step = (delta > 0) ? 1 : -1;          // Knob: 1 Detent = 1 Schritt
           if (id(g_submode) == 1) {                  // Farbmenü: Hue drehen + live anwenden
@@ -1357,7 +1388,7 @@ script:
             id(g_radius_km) = v;
           }
       - lambda: |-
-          const int o[10] = ${tile_order};
+          const int o[11] = ${tile_order};
           if (o[id(g_tile)] == 9) id(render_radar).execute();
           else id(render).execute();
 
@@ -1703,14 +1734,20 @@ script:
   - id: nav_update            # je nach aktiver Kachel die richtige Seite zeigen
     then:
       - if:
-          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 9;' }
+          condition: { lambda: 'const int o[11] = ${tile_order}; return o[id(g_tile)] == 9;' }
           then:
             - lvgl.page.show: page_radar
             - script.execute: render_radar
             - script.execute: radar_fetch
           else:
-            - lvgl.page.show: page_main
-            - script.execute: render
+            - if:
+                condition: { lambda: 'const int o[11] = ${tile_order}; return o[id(g_tile)] == 10;' }
+                then:
+                  - lvgl.page.show: page_clock
+                  - script.execute: render_clock
+                else:
+                  - lvgl.page.show: page_main
+                  - script.execute: render
   - id: radar_tap             # Tippen aufs Radar: nächsten Marker wählen -> Details
     then:
       - lambda: |-
@@ -1747,6 +1784,25 @@ script:
           g_sel_cs = "";
           lv_obj_add_flag(id(w_det_panel), LV_OBJ_FLAG_HIDDEN);
 
+  - id: render_clock          # Uhr-/Home-Seite: Wochentag, Datum, Zeit, Temperaturen
+    then:
+      - lambda: |-
+          auto t = id(ha_time).now();
+          if (t.is_valid()) {
+            static const char* dow[] = {"", "Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"};
+            char d[40];
+            snprintf(d, sizeof(d), "%s, %02d.%02d.%04d", dow[t.day_of_week], t.day_of_month, t.month, t.year);
+            lv_label_set_text(id(w_clk_date), d);
+            char tm[8];
+            snprintf(tm, sizeof(tm), "%02d:%02d", t.hour, t.minute);
+            lv_label_set_text(id(w_clk_time), tm);
+          }
+          char b1[16], b2[16], tp[64];
+          if (id(g_temp_balcony) > -90.0f) snprintf(b1, sizeof(b1), "%.1f °C", id(g_temp_balcony)); else strcpy(b1, "--");
+          if (id(g_temp_living)  > -90.0f) snprintf(b2, sizeof(b2), "%.1f °C", id(g_temp_living));  else strcpy(b2, "--");
+          snprintf(tp, sizeof(tp), "Balkon   %s\nWohnzimmer   %s", b1, b2);
+          lv_label_set_text(id(w_clk_temps), tp);
+
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:
       - homeassistant.action:
@@ -1767,7 +1823,7 @@ script:
   - id: act_button
     then:
       - lambda: |-
-          const int order[10] = ${tile_order};
+          const int order[11] = ${tile_order};
           int t = order[id(g_tile)];
           if (t == 0) {
             id(act_fan_reverse).execute();
@@ -1797,7 +1853,7 @@ script:
   - id: render_color
     then:
       - lambda: |-
-          const int order[10] = ${tile_order};
+          const int order[11] = ${tile_order};
           int t = order[id(g_tile)];
           lv_label_set_text(id(w_col_title),
             (t == 2) ? "Licht (alle)" : (t == 3) ? "Gradient" : (t == 4) ? "Lightstrip" : (t == 5) ? "Stehlampe" : "Farbe");

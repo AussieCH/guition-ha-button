@@ -22,6 +22,9 @@ substitutions:
   fan_speed_entity: "input_number.fan_wohnzimmer_speed"
   fan_clicks_per_stage: "4"   # Rad = 32 Klicks/360°, Bogen ~300°/7 -> ~4 Klicks pro Stufe
   timer_min_per_click: "1"    # Minuten pro Knob-Klick auf der Timer-Kachel (0..180)
+  # Carousel-Reihenfolge: Position -> Tile-Typ (0=Fan 1=Cover 2=LichtAlle 3=Gradient
+  # 4=Lightstrip 5=Stehlampe 6=AppleTV 7=System 8=Timer). Hier: Timer, AppleTV, Rest.
+  tile_order: "{8, 6, 0, 1, 2, 3, 4, 5, 7}"
   cover_entity: "cover.store_wohnzimmer_sud"
   # Drei Hue-Leuchten im Wohnzimmer (+ Sammel-Kachel steuert alle gemeinsam)
   light1_entity: "light.gradient_lightstrip_wohnzimmer"
@@ -72,7 +75,7 @@ interval:
   - interval: 3s
     then:
       - if:
-          condition: { lambda: 'return id(g_tile) == 7;' }
+          condition: { lambda: 'const int o[9] = ${tile_order}; return o[id(g_tile)] == 7;' }
           then:
             - script.execute: render
   # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen
@@ -91,7 +94,7 @@ interval:
             if (id(g_disp_off)) id(wake_display).execute();
           }
           if (id(g_submode) == 2) id(render_timers).execute();
-          else if (id(g_tile) == 8) id(render).execute();
+          else { const int o[9] = ${tile_order}; if (o[id(g_tile)] == 8) id(render).execute(); }
   # Ring-Blinken während eines Timer-Alarms (Farbe = Slot: 0 rot, 1 grün, 2 blau)
   - interval: 0.4s
     then:
@@ -226,7 +229,8 @@ touchscreen:
         if (id(g_was_off)) { id(g_was_off) = false; return; }
         int dx = id(g_xl) - id(g_x0);
         int dy = id(g_yl) - id(g_y0);
-        int t = id(g_tile);
+        const int order[9] = ${tile_order};
+          int t = order[id(g_tile)];
         // Im Farbmenü: jede vertikale Wischgeste = zurück; sonst nichts
         if (id(g_submode) == 1) {
           if (abs(dy) > 50 && abs(dy) > abs(dx)) id(exit_color).execute();
@@ -412,7 +416,7 @@ sensor:
             else if (x <= id(g_bat_prev) - 0.008f) id(g_charging) = false;
           }
           id(g_bat_prev) = x;
-          if (id(g_tile) == 7) id(render).execute();
+          { const int o[9] = ${tile_order}; if (o[id(g_tile)] == 7) id(render).execute(); }
 
 ###############################################################################
 # DISPLAY  (ST77916 QSPI, 360x360, RGB565, Farben invertiert)
@@ -996,10 +1000,12 @@ script:
   - id: render
     then:
       - lambda: |-
-          int t = id(g_tile);
-          // Punkt-Indikator (9 Kacheln): • aktiv, · inaktiv
+          const int order[9] = ${tile_order};
+          int pos = id(g_tile);                      // Carousel-Position
+          int t = order[pos];                        // Tile-Typ an dieser Position
+          // Punkt-Indikator (9 Kacheln): • = aktuelle Position
           std::string d;
-          for (int i = 0; i < 9; i++) d += (i == t) ? "•" : "·";
+          for (int i = 0; i < 9; i++) d += (i == pos) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
           // Arc-Farbe standardmäßig blau, Icon weiß (Timer-Kachel überschreibt beides je Timer-Farbe)
           lv_obj_set_style_arc_color(id(w_arc), lv_color_hex(0x3DA9FC), LV_PART_INDICATOR);
@@ -1151,7 +1157,8 @@ script:
   - id: tap_action
     then:
       - lambda: |-
-          int t = id(g_tile);
+          const int order[9] = ${tile_order};
+          int t = order[id(g_tile)];
           if (t == 0) {
             // Ventilator: Tippen ohne Funktion (Stufe = Dial, Umkehren = Button)
           } else if (t == 1) {                       // Storen: Tippen inaktiv (Buttons öffnen/schließen)
@@ -1171,7 +1178,8 @@ script:
     parameters: { delta: int }
     then:
       - lambda: |-
-          int t = id(g_tile);
+          const int order[9] = ${tile_order};
+          int t = order[id(g_tile)];
           int step = (delta > 0) ? 1 : -1;          // Knob: 1 Detent = 1 Schritt
           if (id(g_submode) == 1) {                  // Farbmenü: Hue drehen + live anwenden
             int h = id(g_hue) + step * 10;
@@ -1484,7 +1492,8 @@ script:
   - id: act_button
     then:
       - lambda: |-
-          int t = id(g_tile);
+          const int order[9] = ${tile_order};
+          int t = order[id(g_tile)];
           if (t == 0) {
             id(act_fan_reverse).execute();
           } else if (t >= 3 && t <= 5) {
@@ -1513,7 +1522,8 @@ script:
   - id: render_color
     then:
       - lambda: |-
-          int t = id(g_tile);
+          const int order[9] = ${tile_order};
+          int t = order[id(g_tile)];
           lv_label_set_text(id(w_col_title),
             (t == 2) ? "Licht (alle)" : (t == 3) ? "Gradient" : (t == 4) ? "Lightstrip" : (t == 5) ? "Stehlampe" : "Farbe");
           uint32_t col = ((uint32_t) id(g_cr) << 16) | ((uint32_t) id(g_cg) << 8) | (uint32_t) id(g_cb);

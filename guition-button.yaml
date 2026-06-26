@@ -24,7 +24,7 @@ substitutions:
   timer_min_per_click: "1"    # Minuten pro Knob-Klick auf der Timer-Kachel (0..180)
   # Carousel-Reihenfolge: Position -> Tile-Typ (0=Fan 1=Cover 2=LichtAlle 3=Gradient
   # 4=Lightstrip 5=Stehlampe 6=AppleTV 7=System 8=Timer). Hier: Timer, AppleTV, Rest.
-  tile_order: "{8, 6, 0, 1, 2, 3, 4, 5, 7}"
+  tile_order: "{8, 6, 0, 1, 2, 3, 4, 5, 7, 9}"
   cover_entity: "cover.store_wohnzimmer_sud"
   # Drei Hue-Leuchten im Wohnzimmer (+ Sammel-Kachel steuert alle gemeinsam)
   light1_entity: "light.gradient_lightstrip_wohnzimmer"
@@ -47,7 +47,7 @@ esphome:
     then:
       # Helligkeit absichern (fängt ungültige/alte gespeicherte Werte ab, sonst dunkel)
       - lambda: 'if (!(id(g_bright) >= 10.0f && id(g_bright) <= 100.0f)) id(g_bright) = 100.0f;'
-      - lambda: 'id(render).execute();'
+      - lambda: 'id(nav_update).execute();'
       - light.turn_on: { id: backlight_light, brightness: !lambda 'return id(g_bright) / 100.0f;' }
       - script.execute: idle_timer
 
@@ -88,7 +88,7 @@ interval:
   - interval: 3s
     then:
       - if:
-          condition: { lambda: 'const int o[9] = ${tile_order}; return o[id(g_tile)] == 7;' }
+          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 7;' }
           then:
             - script.execute: render
   # Flugradar: alle 15s OpenSky-Flugzeuge im Radius holen
@@ -137,8 +137,11 @@ interval:
                   }
                   return true;
                 });
+                std::sort(g_planes.begin(), g_planes.end(),
+                          [](const Aircraft &a, const Aircraft &b) { return a.dist < b.dist; });
                 ESP_LOGI("radar", "%d Flugzeuge im Radius %.0f km (parse %s)",
                          (int) g_planes.size(), id(g_radius_km), ok ? "ok" : "FAIL");
+                id(render_radar).execute();
   # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen
   - interval: 1s
     then:
@@ -155,7 +158,7 @@ interval:
             if (id(g_disp_off)) id(wake_display).execute();
           }
           if (id(g_submode) == 2) id(render_timers).execute();
-          else { const int o[9] = ${tile_order}; if (o[id(g_tile)] == 8) id(render).execute(); }
+          else { const int o[10] = ${tile_order}; if (o[id(g_tile)] == 8) id(render).execute(); }
   # Ring-Blinken während eines Timer-Alarms (Farbe = Slot: 0 rot, 1 grün, 2 blau)
   - interval: 0.4s
     then:
@@ -290,7 +293,7 @@ touchscreen:
         if (id(g_was_off)) { id(g_was_off) = false; return; }
         int dx = id(g_xl) - id(g_x0);
         int dy = id(g_yl) - id(g_y0);
-        const int order[9] = ${tile_order};
+        const int order[10] = ${tile_order};
           int t = order[id(g_tile)];
         // Im Farbmenü: jede vertikale Wischgeste = zurück; sonst nichts
         if (id(g_submode) == 1) {
@@ -304,9 +307,9 @@ touchscreen:
         }
         if (abs(dx) > 50 && abs(dx) > abs(dy)) {
           // Horizontal wischen -> Kachel wechseln (9 Kacheln)
-          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 9;
-          else        id(g_tile) = (id(g_tile) + 8) % 9;
-          id(render).execute();
+          if (dx < 0) id(g_tile) = (id(g_tile) + 1) % 10;
+          else        id(g_tile) = (id(g_tile) + 9) % 10;
+          id(nav_update).execute();
         } else if (abs(dy) > 50 && abs(dy) > abs(dx)) {
           // Vertikal wischen: hoch -> aktive Timer; runter auf Einzel-Lampe (3..5) -> Farbmenü
           if (dy < 0) id(enter_timers).execute();
@@ -480,7 +483,7 @@ sensor:
             else if (x <= id(g_bat_prev) - 0.008f) id(g_charging) = false;
           }
           id(g_bat_prev) = x;
-          { const int o[9] = ${tile_order}; if (o[id(g_tile)] == 7) id(render).execute(); }
+          { const int o[10] = ${tile_order}; if (o[id(g_tile)] == 7) id(render).execute(); }
 
 ###############################################################################
 # DISPLAY  (ST77916 QSPI, 360x360, RGB565, Farben invertiert)
@@ -741,6 +744,17 @@ font:
       - "\U000F0156"   # mdi:close (einzelnen Timer abbrechen)
       - "\U000F0415"   # mdi:plus (neuen Timer hinzufügen)
       - "\U000F012C"   # mdi:check (neuen Timer bestätigen/starten)
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/v7.4.47/fonts/materialdesignicons-webfont.ttf"
+    id: font_plane
+    size: 22
+    bpp: 4
+    glyphs:
+      - "\U000F001D"   # mdi:airplane (Flugradar-Marker)
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 14
+    glyphsets: [GF_Latin_Core]
+    ignore_missing_glyphs: true
 
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
@@ -943,7 +957,7 @@ lvgl:
             y: 148
             text_font: font_dots
             text_color: 0x888888
-            text: "•········"
+            text: "•·········"
     # Farbmenü-Seite (Swipe runter auf Licht-Kacheln öffnet sie, Swipe hoch zurück)
     - id: page_color
       bg_color: 0x000000
@@ -1055,6 +1069,35 @@ lvgl:
               - label: { align: CENTER, text_font: font_icon_sm, text_color: 0x66AAFF, text: "\U000F0156" }
             on_click:
               - lambda: 'id(cancel_one).execute(4);'
+    # Flugradar-Seite
+    - id: page_radar
+      bg_color: 0x000000
+      widgets:
+        - obj: { id: w_rr1, align: CENTER, width: 338, height: 338, radius: 169, bg_opa: TRANSP, border_width: 1, border_color: 0x1E3A24 }
+        - obj: { id: w_rr2, align: CENTER, width: 226, height: 226, radius: 113, bg_opa: TRANSP, border_width: 1, border_color: 0x1E3A24 }
+        - obj: { id: w_rr3, align: CENTER, width: 114, height: 114, radius: 57, bg_opa: TRANSP, border_width: 1, border_color: 0x1E3A24 }
+        - obj: { id: w_rhome, align: CENTER, width: 10, height: 10, radius: 5, bg_color: 0x49C56B }
+        - label: { id: w_radar_status, align: TOP_MID, y: 8, text_font: font_small, text_color: 0xCCCCCC, text: "Flugradar" }
+        - label: { id: w_pl0, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc0, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl1, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc1, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl2, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc2, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl3, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc3, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl4, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc4, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl5, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc5, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl6, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc6, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl7, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc7, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl8, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc8, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
+        - label: { id: w_pl9, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - label: { id: w_pc9, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
 
 ###############################################################################
 # SCRIPTE: render / tap_action / knob_step
@@ -1064,12 +1107,12 @@ script:
   - id: render
     then:
       - lambda: |-
-          const int order[9] = ${tile_order};
+          const int order[10] = ${tile_order};
           int pos = id(g_tile);                      // Carousel-Position
           int t = order[pos];                        // Tile-Typ an dieser Position
           // Punkt-Indikator (9 Kacheln): • = aktuelle Position
           std::string d;
-          for (int i = 0; i < 9; i++) d += (i == pos) ? "•" : "·";
+          for (int i = 0; i < 10; i++) d += (i == pos) ? "•" : "·";
           lv_label_set_text(id(w_dots), d.c_str());
           // Arc-Farbe standardmäßig blau, Icon weiß (Timer-Kachel überschreibt beides je Timer-Farbe)
           lv_obj_set_style_arc_color(id(w_arc), lv_color_hex(0x3DA9FC), LV_PART_INDICATOR);
@@ -1181,7 +1224,7 @@ script:
             char sb[128];
             snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\n%d %%  (%.2f V)\nHelligkeit: %d %%", freeKB, loopms, bpct, v, (int)(id(g_bright) + 0.5f));
             lv_label_set_text(id(w_sys), sb);
-          } else {                                   // Timer (8)
+          } else if (t == 8) {                       // Timer
             lv_label_set_text(id(w_icon), "\U000F13AB");   // mdi:timer
             lv_label_set_text(id(w_name), "Timer");
             lv_arc_set_range(id(w_arc), 0, 180);
@@ -1221,7 +1264,7 @@ script:
   - id: tap_action
     then:
       - lambda: |-
-          const int order[9] = ${tile_order};
+          const int order[10] = ${tile_order};
           int t = order[id(g_tile)];
           if (t == 0) {
             // Ventilator: Tippen ohne Funktion (Stufe = Dial, Umkehren = Button)
@@ -1242,7 +1285,7 @@ script:
     parameters: { delta: int }
     then:
       - lambda: |-
-          const int order[9] = ${tile_order};
+          const int order[10] = ${tile_order};
           int t = order[id(g_tile)];
           int step = (delta > 0) ? 1 : -1;          // Knob: 1 Detent = 1 Schritt
           if (id(g_submode) == 1) {                  // Farbmenü: Hue drehen + live anwenden
@@ -1303,7 +1346,7 @@ script:
             if (v < 10.0f) v = 10.0f; if (v > 100.0f) v = 100.0f;
             id(g_bright) = v;
             id(apply_bright).execute();
-          } else {                                   // Timer (8)
+          } else if (t == 8) {                       // Timer
             int n = 0; for (int i = 0; i < 5; i++) if (id(g_tmr)[i] > 0) n++;
             bool addmode = id(g_add_mode) || (n == 0);
             if (addmode) {                           // + aktiv: Minuten einstellen 0..180
@@ -1318,8 +1361,15 @@ script:
               pos = (pos + (step > 0 ? 1 : -1) + m) % m;
               id(g_tmr_sel) = act[pos];
             }
+          } else {                                   // Flugradar (9): Radius 10..50 km (32 Klicks)
+            float v = id(g_radius_km) + step * 1.25f;
+            if (v < 10.0f) v = 10.0f; if (v > 50.0f) v = 50.0f;
+            id(g_radius_km) = v;
           }
-      - lambda: 'id(render).execute();'
+      - lambda: |-
+          const int o[10] = ${tile_order};
+          if (o[id(g_tile)] == 9) id(render_radar).execute();
+          else id(render).execute();
 
   # --- HA-Service-Wrapper (eigene Scripts, damit Lambdas sie aufrufen können) ---
   # Ventilator (RF): aktuelle Stufe -> passendes HA-Script auslösen
@@ -1541,6 +1591,47 @@ script:
           if (slot >= 0 && slot < 5) id(g_tmr)[slot] = 0;
       - script.execute: render_timers
 
+  # --- Flugradar ---
+  - id: render_radar          # Flugzeuge auf das Radar projizieren
+    then:
+      - lambda: |-
+          lv_obj_t* ico[10] = { id(w_pl0), id(w_pl1), id(w_pl2), id(w_pl3), id(w_pl4), id(w_pl5), id(w_pl6), id(w_pl7), id(w_pl8), id(w_pl9) };
+          lv_obj_t* txt[10] = { id(w_pc0), id(w_pc1), id(w_pc2), id(w_pc3), id(w_pc4), id(w_pc5), id(w_pc6), id(w_pc7), id(w_pc8), id(w_pc9) };
+          const float lat0 = ${home_lat}, lon0 = ${home_lon};
+          const float cl = cosf(lat0 * 0.01745329f);
+          float r = id(g_radius_km);
+          float scale = 169.0f / r;                  // px pro km (äußerer Ring)
+          int shown = 0;
+          for (size_t k = 0; k < g_planes.size() && shown < 10; k++) {
+            Aircraft &a = g_planes[k];
+            if (a.dist > r) continue;
+            int sx = (int)((a.lon - lon0) * 111.0f * cl * scale);
+            int sy = (int)(-(a.lat - lat0) * 111.0f * scale);
+            lv_obj_align(ico[shown], LV_ALIGN_CENTER, sx, sy);
+            lv_obj_align(txt[shown], LV_ALIGN_CENTER, sx, sy + 14);
+            lv_label_set_text(txt[shown], a.cs.empty() ? "?" : a.cs.c_str());
+            lv_obj_clear_flag(ico[shown], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_clear_flag(txt[shown], LV_OBJ_FLAG_HIDDEN);
+            shown++;
+          }
+          for (int i = shown; i < 10; i++) {
+            lv_obj_add_flag(ico[i], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(txt[i], LV_OBJ_FLAG_HIDDEN);
+          }
+          char st[48];
+          snprintf(st, sizeof(st), "Flugradar   %.0f km   %d Flug%s", r, shown, shown == 1 ? "" : "e");
+          lv_label_set_text(id(w_radar_status), st);
+  - id: nav_update            # je nach aktiver Kachel die richtige Seite zeigen
+    then:
+      - if:
+          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 9;' }
+          then:
+            - lvgl.page.show: page_radar
+            - script.execute: render_radar
+          else:
+            - lvgl.page.show: page_main
+            - script.execute: render
+
   - id: act_light_color         # aktuelles Preset auf g_ltarget anwenden (schaltet auch ein)
     then:
       - homeassistant.action:
@@ -1561,7 +1652,7 @@ script:
   - id: act_button
     then:
       - lambda: |-
-          const int order[9] = ${tile_order};
+          const int order[10] = ${tile_order};
           int t = order[id(g_tile)];
           if (t == 0) {
             id(act_fan_reverse).execute();
@@ -1591,7 +1682,7 @@ script:
   - id: render_color
     then:
       - lambda: |-
-          const int order[9] = ${tile_order};
+          const int order[10] = ${tile_order};
           int t = order[id(g_tile)];
           lv_label_set_text(id(w_col_title),
             (t == 2) ? "Licht (alle)" : (t == 3) ? "Gradient" : (t == 4) ? "Lightstrip" : (t == 5) ? "Stehlampe" : "Farbe");

@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <algorithm>
 
 // Ein Flugzeug aus den OpenSky-Statusdaten (auf das reduziert, was die Radar-Page braucht)
 struct Aircraft {

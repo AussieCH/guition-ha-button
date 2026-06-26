@@ -93,11 +93,11 @@ interval:
           condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 7;' }
           then:
             - script.execute: render
-  # Flugradar: nur abrufen, wenn man auf der Radar-Kachel ist (schont OpenSky-Rate-Limit)
-  - interval: 30s
+  # Flugradar: alle 5s abrufen – aber nur wenn Radar-Kachel aktiv UND Display wach
+  - interval: 5s
     then:
       - if:
-          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 9;' }
+          condition: { lambda: 'const int o[10] = ${tile_order}; return o[id(g_tile)] == 9 && !id(g_disp_off);' }
           then:
             - script.execute: radar_fetch
   # Timer-Countdown: jede Sekunde laufende Timer runterzählen, bei 0 Ton spielen

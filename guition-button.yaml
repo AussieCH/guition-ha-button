@@ -756,6 +756,12 @@ font:
     glyphsets: [GF_Latin_Core]
     ignore_missing_glyphs: true
 
+image:
+  - file: assets/airplane.png      # zeigt nach Norden; wird je Kurs rotiert
+    id: img_plane
+    type: RGB
+    transparency: alpha_channel
+
 ###############################################################################
 # LVGL  (eine Seite; alle Werte werden vom render-Script gesetzt)
 ###############################################################################
@@ -1078,25 +1084,25 @@ lvgl:
         - obj: { id: w_rr3, align: CENTER, width: 114, height: 114, radius: 57, bg_opa: TRANSP, border_width: 1, border_color: 0x1E3A24 }
         - obj: { id: w_rhome, align: CENTER, width: 10, height: 10, radius: 5, bg_color: 0x49C56B }
         - label: { id: w_radar_status, align: TOP_MID, y: 8, text_font: font_small, text_color: 0xCCCCCC, text: "Flugradar" }
-        - label: { id: w_pl0, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl0, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc0, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl1, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl1, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc1, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl2, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl2, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc2, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl3, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl3, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc3, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl4, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl4, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc4, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl5, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl5, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc5, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl6, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl6, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc6, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl7, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl7, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc7, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl8, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl8, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc8, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
-        - label: { id: w_pl9, align: CENTER, text_font: font_plane, text_color: 0x66DDFF, hidden: true, text: "\U000F001D" }
+        - image: { id: w_pl9, src: img_plane, align: CENTER, hidden: true }
         - label: { id: w_pc9, align: CENTER, text_font: font_small, text_color: 0x9FE6FF, hidden: true, text: "" }
 
 ###############################################################################
@@ -1608,6 +1614,8 @@ script:
             int sx = (int)((a.lon - lon0) * 111.0f * cl * scale);
             int sy = (int)(-(a.lat - lat0) * 111.0f * scale);
             lv_obj_align(ico[shown], LV_ALIGN_CENTER, sx, sy);
+            lv_image_set_pivot(ico[shown], 14, 14);            // um Mitte drehen
+            lv_image_set_rotation(ico[shown], (int)(a.trk * 10.0f));  // Nase in Flugrichtung (0.1°)
             lv_obj_align(txt[shown], LV_ALIGN_CENTER, sx, sy + 14);
             lv_label_set_text(txt[shown], a.cs.empty() ? "?" : a.cs.c_str());
             lv_obj_clear_flag(ico[shown], LV_OBJ_FLAG_HIDDEN);

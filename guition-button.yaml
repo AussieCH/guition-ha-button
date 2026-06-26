@@ -305,6 +305,8 @@ globals:
   - { id: g_cg, type: int, restore_value: no, initial_value: '0' }
   - { id: g_cb, type: int, restore_value: no, initial_value: '0' }
   - { id: g_tv_state, type: int, restore_value: no, initial_value: '0' }  # media_player: 0=Aus 1=Läuft 2=Pause/wach
+  - { id: g_charging, type: bool,  restore_value: no, initial_value: 'false' }  # Akku lädt (Heuristik)
+  - { id: g_bat_prev, type: float, restore_value: no, initial_value: '0' }      # letzte Akku-Spannung (Trend)
   # Display-Sleep
   - { id: g_disp_off, type: bool, restore_value: no, initial_value: 'false' }  # Backlight aus (idle)
   - { id: g_was_off,  type: bool, restore_value: no, initial_value: 'false' }  # diese Berührung war nur Wecken
@@ -396,6 +398,17 @@ sensor:
     filters:
       - multiply: 2.0
       - exponential_moving_average: { alpha: 0.2, send_every: 1 }
+    on_value:
+      # Kein Lade-Status-Pin -> Heuristik: Spannung steigt oder >=4.13V = lädt
+      - lambda: |-
+          if (x >= 4.13f) {
+            id(g_charging) = true;
+          } else if (id(g_bat_prev) > 0.5f) {       // erster Messwert nur merken
+            if      (x >= id(g_bat_prev) + 0.008f) id(g_charging) = true;
+            else if (x <= id(g_bat_prev) - 0.008f) id(g_charging) = false;
+          }
+          id(g_bat_prev) = x;
+          if (id(g_tile) == 7) id(render).execute();
 
 ###############################################################################
 # DISPLAY  (ST77916 QSPI, 360x360, RGB565, Farben invertiert)
@@ -1087,8 +1100,9 @@ script:
             lv_arc_set_value(id(w_arc), bpct);
             float freeKB = id(sys_free).has_state() ? id(sys_free).state / 1024.0f : 0.0f;
             float loopms = id(sys_loop).has_state() ? id(sys_loop).state : 0.0f;
-            char sb[96];
-            snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\nAkku: %d %%  (%.2f V)", freeKB, loopms, bpct, v);
+            char sb[112];
+            const char* chg = id(g_charging) ? " · lädt" : "";
+            snprintf(sb, sizeof(sb), "RAM frei: %.0f KB\nLast: %.0f ms\nAkku: %d %%%s  (%.2f V)", freeKB, loopms, bpct, chg, v);
             lv_label_set_text(id(w_sys), sb);
           } else {                                   // Timer (8)
             lv_label_set_text(id(w_icon), "\U000F13AB");   // mdi:timer

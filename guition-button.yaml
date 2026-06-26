@@ -302,6 +302,7 @@ globals:
     restore_value: no
     initial_value: '{0, 0, 0}'
   - { id: g_all_pct, type: float, restore_value: no, initial_value: '50' }  # absolute Master-Helligkeit "Licht alle" (10..100)
+  - { id: g_light_lock, type: uint32_t, restore_value: no, initial_value: '0' }  # millis: bis dahin HA-Helligkeit ignorieren (Anti-Hinken)
   - { id: g_color_idx, type: int, restore_value: no, initial_value: '0' }   # aktuelles Farb-Preset
   - { id: g_set_pct, type: int, restore_value: no, initial_value: '0' }     # Scratch: Helligkeit für act_light_bri
   - { id: g_ltarget, type: std::string, restore_value: no, initial_value: '""' }  # Ziel-Entity(s) der aktiven Licht-Kachel
@@ -378,19 +379,19 @@ sensor:
     entity_id: ${light1_entity}
     attribute: brightness          # 0..255
     on_value:
-      - lambda: 'id(g_li_pct)[0] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+      - lambda: 'if (millis() < id(g_light_lock)) return; id(g_li_pct)[0] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
   - platform: homeassistant
     id: ha_l2_bri
     entity_id: ${light2_entity}
     attribute: brightness
     on_value:
-      - lambda: 'id(g_li_pct)[1] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+      - lambda: 'if (millis() < id(g_light_lock)) return; id(g_li_pct)[1] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
   - platform: homeassistant
     id: ha_l3_bri
     entity_id: ${light3_entity}
     attribute: brightness
     on_value:
-      - lambda: 'id(g_li_pct)[2] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
+      - lambda: 'if (millis() < id(g_light_lock)) return; id(g_li_pct)[2] = isnan(x) ? 0 : (int)(x / 255.0f * 100.0f + 0.5f); id(render).execute();'
   # --- System-Info (Kachel 7) ---
   - platform: debug
     free:
@@ -1223,11 +1224,13 @@ script:
             int iv = (int)(v + 0.5f);
             for (int k = 0; k < 3; k++) id(g_li_pct)[k] = iv;  // optimistisch: alle gleich
             id(g_set_pct) = iv;
+            id(g_light_lock) = millis() + 1500;                // HA-Rückmeldung kurz ignorieren
             id(act_light_on).execute();                        // alle 3 -> iv (schaltet ein)
           } else if (t >= 3 && t <= 5) {             // Einzel-Lampe: ±5 % Helligkeit
             int k = t - 3;
             int v = id(g_li_pct)[k] + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;
             id(g_li_pct)[k] = v; id(g_set_pct) = v;
+            id(g_light_lock) = millis() + 1500;                // HA-Rückmeldung kurz ignorieren
             id(act_light_on).execute();
           } else if (t == 6) {                       // Apple TV: Lautstärke
             if (step > 0) id(act_tv_volup).execute();

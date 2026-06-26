@@ -301,7 +301,7 @@ globals:
     type: int[3]
     restore_value: no
     initial_value: '{0, 0, 0}'
-  - { id: g_all_pct, type: int, restore_value: no, initial_value: '50' }    # Helligkeit der Sammel-Kachel
+  - { id: g_all_pct, type: float, restore_value: no, initial_value: '50' }  # absolute Master-Helligkeit "Licht alle" (10..100)
   - { id: g_color_idx, type: int, restore_value: no, initial_value: '0' }   # aktuelles Farb-Preset
   - { id: g_set_pct, type: int, restore_value: no, initial_value: '0' }     # Scratch: Helligkeit für act_light_bri
   - { id: g_ltarget, type: std::string, restore_value: no, initial_value: '""' }  # Ziel-Entity(s) der aktiven Licht-Kachel
@@ -1214,13 +1214,16 @@ script:
             }
           } else if (t == 1) {                       // Storen: Knob inaktiv (Buttons öffnen/schließen)
             // nichts
-          } else if (t == 2) {                       // Licht alle: relativ ±5 %, je Lampe ab Ist-Wert
-            for (int k = 0; k < 3; k++) {
-              if (!id(g_li_on)[k]) continue;         // ausgeschaltete Lampen bleiben aus
-              int v = id(g_li_pct)[k] + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;
-              id(g_li_pct)[k] = v;
-            }
-            id(act_group_dim).execute();
+          } else if (t == 2) {                       // Licht alle: absolute Master-Helligkeit (analog System), 1.875%/Klick
+            int s = 0, n = 0;
+            for (int k = 0; k < 3; k++) if (id(g_li_on)[k]) { s += id(g_li_pct)[k]; n++; }
+            float base = n ? (float) s / n : id(g_all_pct);   // ab aktuellem Durchschnitt weiter
+            float v = base + step * 1.875f; if (v < 10.0f) v = 10.0f; if (v > 100.0f) v = 100.0f;
+            id(g_all_pct) = v;
+            int iv = (int)(v + 0.5f);
+            for (int k = 0; k < 3; k++) id(g_li_pct)[k] = iv;  // optimistisch: alle gleich
+            id(g_set_pct) = iv;
+            id(act_light_on).execute();                        // alle 3 -> iv (schaltet ein)
           } else if (t >= 3 && t <= 5) {             // Einzel-Lampe: ±5 % Helligkeit
             int k = t - 3;
             int v = id(g_li_pct)[k] + step * 5; if (v < 0) v = 0; if (v > 100) v = 100;

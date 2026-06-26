@@ -82,6 +82,8 @@ http_request:
   id: http_radar
   useragent: wohnzimmer-knob
   timeout: 12s
+  buffer_size_tx: 4096      # großer Bearer-Token-Header (~1500 Zeichen) muss reinpassen
+  buffer_size_rx: 4096
 
 # System-Kachel alle paar Sekunden neu zeichnen (Sensoren triggern kein Render)
 interval:

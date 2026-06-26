@@ -1354,9 +1354,12 @@ script:
       - lambda: 'id(g_disp_off) = false;'
       - light.turn_on: { id: backlight_light, brightness: !lambda 'return id(g_bright) / 100.0f;' }
       - script.execute: idle_timer
-  - id: apply_bright          # eingestellte Display-Helligkeit anwenden
+  - id: apply_bright          # eingestellte Display-Helligkeit sofort anwenden (kein Fade)
     then:
-      - light.turn_on: { id: backlight_light, brightness: !lambda 'return id(g_bright) / 100.0f;' }
+      - light.turn_on:
+          id: backlight_light
+          brightness: !lambda 'return id(g_bright) / 100.0f;'
+          transition_length: 0s
 
   # --- Timer ---
   - id: start_timer           # neuen Timer mit g_timer_set Minuten in freiem Slot starten
